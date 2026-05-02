@@ -1,0 +1,10 @@
+{
+  "graphs": {
+    "sentinel_life": "./sentinel_agent/graph.py:graph",
+    "agent": "./sentinel_agent/graph.py:graph"
+  },
+  "env": ".env",
+  "dependencies": [
+    "."
+  ]
+}

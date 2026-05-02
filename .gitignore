@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.egg-info/
+*.pyc
+.venv/
+uv.lock
+*.pkl
+
+# Node
+node_modules/
+.next/
+
+# Environment
+.env
+.env.local
+*.local
+
+# LangGraph runtime
+.langgraph_api/
+
+# Build artifacts
+reports/
+*.pdf
+
+# IDE
+.idea/
+.DS_Store
