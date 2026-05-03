@@ -48,6 +48,17 @@ NEXT_PUBLIC_INSURANCE_API_URL=http://localhost:8001
 NEXT_PUBLIC_INSURANCE_API_KEY=sentinel-api-key-2025
 ```
 
+Optional realtime voice settings for the frontend:
+
+```bash
+OPENAI_API_KEY=sk-...
+OPENAI_REALTIME_MODEL=gpt-realtime
+OPENAI_REALTIME_VOICE=marin
+OPENAI_REALTIME_TRANSCRIBE_MODEL=gpt-4o-transcribe
+OPENAI_REALTIME_TRANSCRIBE_LANGUAGE=en
+NEXT_PUBLIC_ENABLE_REALTIME_VOICE=true
+```
+
 ## Demo Policies
 
 Useful seeded policies from the Sentinel Life dataset:

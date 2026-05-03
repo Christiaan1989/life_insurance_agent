@@ -9,6 +9,7 @@ import {
   type ViewType,
 } from "@/hooks/use-active-view";
 import { useQueryState, parseAsBoolean } from "nuqs";
+import { useTTSOrchestrator } from "@/hooks/use-tts-orchestrator";
 import { HomeView } from "./HomeView";
 import { PolicyOverviewView } from "./PolicyOverviewView";
 import { ClaimsView } from "./ClaimsView";
@@ -29,6 +30,9 @@ export function ViewRouter() {
   const stream = useStreamContext();
   const messages = stream.messages;
   const activeView = useActiveView(messages);
+
+  // TTS orchestration lives here so it survives view transitions
+  useTTSOrchestrator();
   const pendingAuth = usePendingAuth(messages);
 
   const [threadId, _setThreadId] = useQueryState("threadId");

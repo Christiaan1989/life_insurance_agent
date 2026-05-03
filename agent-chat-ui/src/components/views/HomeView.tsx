@@ -231,7 +231,7 @@ export function HomeView({
       // Brief pause so the greeting doesn't overlap with whatever the user clicked
       setTimeout(() => {
         ttsSpeak(
-          "Hello! I'm Sentinel, your life insurance claims advisor. How can I help you today?",
+          "Hello, this is your Sentinel life insurance agent. How can I help you today?",
         );
       }, 600);
     };

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { realtimeSpeak, realtimeStopSpeaking } from "@/lib/realtime-speech";
 
 // ---------------------------------------------------------------------------
 // Module-level TTS singleton — shared across all components that import this.
@@ -19,11 +20,35 @@ let initialized = false;
 let generation = 0; // cancel token — incremented on stop/new session
 
 // Progressive streaming state
-let audioQueue: Promise<string | null>[] = [];
+let audioQueue: (() => Promise<void>)[] = [];
 let queueIndex = 0;
 let queueDraining = false;
+let queueDrainGeneration = 0;
 let streamingDone = false;
 let queueWakeup: (() => void) | null = null;
+
+function splitIntoSpeakableSegments(text: string): string[] {
+  const segments: string[] = [];
+  let start = 0;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch !== "." && ch !== "!" && ch !== "?") continue;
+    const next = text[i + 1];
+    if (next !== undefined && next !== " " && next !== "\n" && next !== "\r") {
+      continue;
+    }
+
+    const segment = text.slice(start, i + 1).trim();
+    if (segment) segments.push(segment);
+    start = i + 1;
+  }
+
+  const trailing = text.slice(start).trim();
+  if (trailing) segments.push(trailing);
+
+  return segments.length > 0 ? segments : [text.trim()].filter(Boolean);
+}
 
 function init() {
   if (initialized || typeof window === "undefined") return;
@@ -60,6 +85,38 @@ async function fetchTTSAudio(text: string): Promise<string | null> {
   }
 }
 
+async function playLegacyTTS(text: string): Promise<void> {
+  const url = await fetchTTSAudio(text);
+  if (!url) return;
+
+  try {
+    const audio = new Audio(url);
+    currentAudio = audio;
+
+    await new Promise<void>((resolve) => {
+      const cleanup = () => {
+        URL.revokeObjectURL(url);
+        resolve();
+      };
+      audio.onended = cleanup;
+      audio.onerror = cleanup;
+      audio.play().catch(cleanup);
+    });
+  } catch (e) {
+    console.error("TTS playback error:", e);
+  }
+}
+
+async function speakSegment(text: string): Promise<void> {
+  const spokeWithRealtime = await realtimeSpeak(text).catch((error) => {
+    console.warn("Realtime voice segment failed, falling back to TTS:", error);
+    return false;
+  });
+
+  if (spokeWithRealtime) return;
+  await playLegacyTTS(text);
+}
+
 // ---------------------------------------------------------------------------
 // Playback queue — drains audio promises in order, waits for more if needed
 // ---------------------------------------------------------------------------
@@ -67,35 +124,13 @@ async function fetchTTSAudio(text: string): Promise<string | null> {
 async function drainQueue(myGen: number): Promise<void> {
   if (queueDraining) return;
   queueDraining = true;
+  queueDrainGeneration = myGen;
 
   while (myGen === generation) {
     if (queueIndex < audioQueue.length) {
       try {
-        const url = await audioQueue[queueIndex];
-
-        if (!url) {
-          // TTS fetch failed silently — skip this segment
-          queueIndex++;
-          continue;
-        }
-
-        if (myGen !== generation) {
-          URL.revokeObjectURL(url);
-          break;
-        }
-
-        const audio = new Audio(url);
-        currentAudio = audio;
-
-        await new Promise<void>((resolve) => {
-          const cleanup = () => {
-            URL.revokeObjectURL(url);
-            resolve();
-          };
-          audio.onended = cleanup;
-          audio.onerror = cleanup;
-          audio.play().catch(cleanup);
-        });
+        const play = audioQueue[queueIndex];
+        await play();
       } catch (e) {
         console.error("TTS queue error:", e);
       }
@@ -112,11 +147,18 @@ async function drainQueue(myGen: number): Promise<void> {
   }
 
   queueDraining = false;
-  if (myGen === generation) {
-    currentAudio = null;
-    isSpeaking = false;
-    notify();
+  queueDrainGeneration = 0;
+
+  if (myGen !== generation) {
+    if (audioQueue.length > queueIndex && !queueDraining) {
+      void drainQueue(generation);
+    }
+    return;
   }
+
+  currentAudio = null;
+  isSpeaking = false;
+  notify();
 }
 
 // ---------------------------------------------------------------------------
@@ -149,8 +191,7 @@ export function ttsBeginStreaming(): void {
 export function ttsFeedSentence(sentence: string): void {
   if (!isEnabled || !sentence.trim()) return;
 
-  // Start fetching immediately — don't wait for playback to catch up
-  audioQueue.push(fetchTTSAudio(sentence));
+  audioQueue.push(() => speakSegment(sentence));
 
   // Wake the drain loop if it's waiting for more sentences
   if (queueWakeup) {
@@ -160,7 +201,7 @@ export function ttsFeedSentence(sentence: string): void {
   }
 
   // Start drain loop if not already running
-  if (!queueDraining) {
+  if (!queueDraining || queueDrainGeneration !== generation) {
     drainQueue(generation);
   }
 }
@@ -189,10 +230,9 @@ export async function ttsSpeak(text: string): Promise<void> {
   if (!isEnabled || !text.trim()) return;
 
   ttsBeginStreaming();
-  const sentences = text.match(/[^.!?]*[.!?]+/g) || [text];
-  for (const s of sentences) {
-    const trimmed = s.trim();
-    if (trimmed) ttsFeedSentence(trimmed);
+  const segments = splitIntoSpeakableSegments(text);
+  for (const segment of segments) {
+    if (segment) ttsFeedSentence(segment);
   }
   ttsEndStreaming();
 }
@@ -219,6 +259,8 @@ export function ttsStop(): void {
       URL.revokeObjectURL(audio.src);
     }
   }
+
+  realtimeStopSpeaking();
 
   audioQueue = [];
   queueIndex = 0;

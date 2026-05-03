@@ -11,24 +11,11 @@ import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import { Button } from "@/components/ui/button";
 import { ArrowDown } from "lucide-react";
 import { cn } from "@/lib/utils";
-import {
-  useTTS,
-  ttsStop,
-  ttsBeginStreaming,
-  ttsFeedSentence,
-  ttsEndStreaming,
-  ttsSpeak,
-} from "@/hooks/use-tts";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Returns true if the message is a voice-navigation command that should
- * be hidden from the chat display. Checks human messages whose text
- * content starts with the [VOICE_NAV] prefix.
- */
 function isVoiceNavMessage(message: { type: string; content: unknown }): boolean {
   if (message.type !== "human") return false;
   const content = message.content;
@@ -40,21 +27,6 @@ function isVoiceNavMessage(message: { type: string; content: unknown }): boolean
     return firstText?.text?.startsWith(VOICE_NAV_PREFIX) ?? false;
   }
   return false;
-}
-
-/**
- * Extract plain text from an AI message's content field.
- * Skips tool_call blocks — only returns conversational text.
- */
-function extractAIText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .filter((b: Record<string, unknown>) => b.type === "text")
-      .map((b: Record<string, unknown>) => b.text as string)
-      .join(" ");
-  }
-  return "";
 }
 
 // ---------------------------------------------------------------------------
@@ -121,15 +93,6 @@ export function ChatPanel({ footer, className, contentClassName }: ChatPanelProp
   const prevMessageLength = useRef(0);
   const [firstTokenReceived, setFirstTokenReceived] = React.useState(false);
 
-  // TTS integration — progressive: speaks sentences as they stream in
-  const { enabled: ttsEnabled } = useTTS();
-  const prevIsLoadingRef = useRef(false);
-  const oldAiIdsRef = useRef<Set<string>>(new Set()); // AI IDs present before loading
-  const ttsMsgIdRef = useRef<string | null>(null); // AI message we're speaking
-  const spokenLengthRef = useRef(0); // chars already sent to TTS
-  const spokenPrefixRef = useRef(""); // actual text we've spoken — for prefix verification
-  const streamingTTSRef = useRef(false);
-
   React.useEffect(() => {
     if (
       messages.length !== prevMessageLength.current &&
@@ -140,151 +103,6 @@ export function ChatPanel({ footer, className, contentClassName }: ChatPanelProp
     }
     prevMessageLength.current = messages.length;
   }, [messages]);
-
-  // ── TTS: progressively speak AI sentences as they stream in ──
-  React.useEffect(() => {
-    const wasLoading = prevIsLoadingRef.current;
-    prevIsLoadingRef.current = isLoading;
-
-    // When loading starts, stop any in-progress TTS and snapshot the
-    // IDs of AI messages already present so we never re-read them.
-    // NOTE: no early return — fall through so we can detect new AI text
-    // on the very same render that loading starts (reduces latency).
-    if (isLoading && !wasLoading) {
-      ttsStop();
-      const existingIds = new Set<string>();
-      for (const m of messages) {
-        if (m.type === "ai" && m.id) existingIds.add(m.id);
-      }
-      oldAiIdsRef.current = existingIds;
-      ttsMsgIdRef.current = null;
-      spokenLengthRef.current = 0;
-      spokenPrefixRef.current = "";
-      streamingTTSRef.current = false;
-    }
-
-    // While agent is streaming, detect complete clauses in NEW AI messages only
-    if (isLoading && ttsEnabled) {
-      // Find the last AI message whose ID was NOT present before loading started
-      const lastNewAI = [...messages]
-        .reverse()
-        .find((m) => m.type === "ai" && m.id && !oldAiIdsRef.current.has(m.id));
-
-      if (lastNewAI) {
-        // If we switched to a different AI message, reset the cursor
-        const msgId = lastNewAI.id ?? null;
-        if (msgId !== ttsMsgIdRef.current) {
-          ttsMsgIdRef.current = msgId;
-          spokenLengthRef.current = 0;
-          spokenPrefixRef.current = "";
-        }
-
-        const fullText = extractAIText(lastNewAI.content);
-
-        // Safety: if cursor overshot (content replaced), clamp to end
-        // and wait for the next render — never reset to 0 (that replays).
-        if (spokenLengthRef.current > fullText.length) {
-          spokenLengthRef.current = fullText.length;
-          spokenPrefixRef.current = fullText;
-          return;
-        }
-
-        // Prefix verification: ensure the text before our cursor still
-        // matches what we've already spoken. If content was replaced or
-        // reordered, skip this render to avoid repeats.
-        if (spokenPrefixRef.current.length > 0) {
-          const currentPrefix = fullText.slice(0, spokenLengthRef.current);
-          if (currentPrefix !== spokenPrefixRef.current) {
-            spokenLengthRef.current = fullText.length;
-            spokenPrefixRef.current = fullText;
-            return;
-          }
-        }
-
-        // Scan forward from the cursor for sentence boundaries.
-        // We work in absolute positions within fullText so the cursor
-        // never drifts — no gaps, no double-counting.
-        let cursor = spokenLengthRef.current;
-        let fed = false;
-
-        while (cursor < fullText.length) {
-          // Look for sentence-ending punctuation (.!?) followed by
-          // a space, newline, or end-of-string.
-          let boundary = -1;
-          for (let i = cursor; i < fullText.length; i++) {
-            const ch = fullText[i];
-            if (ch === "." || ch === "!" || ch === "?") {
-              const next = fullText[i + 1];
-              if (next === undefined || next === " " || next === "\n" || next === "\r") {
-                boundary = i + 1; // include the punctuation
-                break;
-              }
-            }
-          }
-
-          if (boundary === -1) break; // no complete sentence yet — wait for more tokens
-
-          const sentence = fullText.slice(cursor, boundary).trim();
-          if (sentence) {
-            if (!streamingTTSRef.current) {
-              ttsBeginStreaming();
-              streamingTTSRef.current = true;
-            }
-            ttsFeedSentence(sentence);
-            fed = true;
-          }
-          // Skip any whitespace after the boundary so the next
-          // sentence starts cleanly (avoids leading spaces).
-          cursor = boundary;
-          while (cursor < fullText.length && (fullText[cursor] === " " || fullText[cursor] === "\n")) {
-            cursor++;
-          }
-        }
-
-        if (fed) {
-          spokenLengthRef.current = cursor;
-          spokenPrefixRef.current = fullText.slice(0, cursor);
-        }
-      }
-    }
-
-    // When agent finishes, feed any remaining text and close the stream
-    if (wasLoading && !isLoading) {
-      if (streamingTTSRef.current) {
-        const lastNewAI = [...messages]
-          .reverse()
-          .find((m) => m.type === "ai" && m.id && !oldAiIdsRef.current.has(m.id));
-        if (lastNewAI) {
-          const fullText = extractAIText(lastNewAI.content);
-          const remaining = fullText
-            .slice(spokenLengthRef.current)
-            .trim();
-          if (remaining) ttsFeedSentence(remaining);
-        }
-        ttsEndStreaming();
-      } else if (ttsEnabled) {
-        // Fallback: speak full new response if progressive detection missed it
-        const lastNewAI = [...messages]
-          .reverse()
-          .find((m) => m.type === "ai" && m.id && !oldAiIdsRef.current.has(m.id));
-        if (lastNewAI) {
-          const text = extractAIText(lastNewAI.content);
-          if (text.trim()) ttsSpeak(text);
-        }
-      }
-      ttsMsgIdRef.current = null;
-      spokenLengthRef.current = 0;
-      spokenPrefixRef.current = "";
-      streamingTTSRef.current = false;
-    }
-  }, [isLoading, messages, ttsEnabled]);
-
-  // Stop TTS when this panel unmounts (e.g., view transition)
-  React.useEffect(() => {
-    return () => {
-      ttsStop();
-    };
-  }, []);
 
   const hasNoAIOrToolMessages = !messages.find(
     (m) => m.type === "ai" || m.type === "tool",
