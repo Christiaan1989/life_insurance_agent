@@ -120,13 +120,13 @@ export function ChatPanel({ footer, className, contentClassName }: ChatPanelProp
   };
 
   return (
-    <div className={cn("relative flex flex-1 flex-col overflow-hidden", className)}>
+    <div className={cn("relative flex min-h-0 flex-1 flex-col overflow-hidden", className)}>
       {/* Scrollable messages area */}
       <StickToBottom className="relative flex-1 overflow-hidden">
         <StickyToBottomContent
-          className="absolute inset-0 overflow-y-scroll px-4 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-track]:bg-transparent"
+          className="sl-scroll absolute inset-0 overflow-y-scroll px-4"
           contentClassName={cn(
-            "pt-8 pb-4 max-w-3xl mx-auto flex flex-col gap-4 w-full",
+            "mx-auto flex w-full max-w-3xl flex-col gap-4 pb-4 pt-6",
             contentClassName,
           )}
           content={
@@ -174,7 +174,7 @@ export function ChatPanel({ footer, className, contentClassName }: ChatPanelProp
       {footer && (
         <div className="relative z-10 shrink-0">
           {/* Gradient fade — creates smooth visual transition from messages to input */}
-          <div className="pointer-events-none absolute -top-8 left-0 right-0 h-8 bg-gradient-to-t from-[#030303] to-transparent" />
+          <div className="pointer-events-none absolute -top-10 left-0 right-0 h-10 bg-gradient-to-t from-[var(--sl-bg)] to-transparent" />
           {footer}
         </div>
       )}

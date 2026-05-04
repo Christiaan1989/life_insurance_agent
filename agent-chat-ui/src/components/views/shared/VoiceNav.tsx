@@ -71,7 +71,11 @@ export function VoiceNav({ className }: { className?: string }) {
       <AnimatePresence>
         {navState === "listening" && (
           <motion.div
-            className="pointer-events-none absolute -inset-1.5 rounded-full border border-[#C5961A]/20"
+            className="pointer-events-none absolute -inset-1.5 rounded-full"
+            style={{
+              border:
+                "1px solid color-mix(in oklab, var(--sl-accent) 30%, transparent)",
+            }}
             initial={{ scale: 1, opacity: 0.4 }}
             animate={{ scale: [1, 1.5], opacity: [0.4, 0] }}
             exit={{ opacity: 0, transition: { duration: 0.15 } }}
@@ -84,14 +88,27 @@ export function VoiceNav({ className }: { className?: string }) {
         onClick={handleClick}
         whileHover={!isActive ? { scale: 1.04 } : {}}
         whileTap={!isActive ? { scale: 0.96 } : {}}
-        className={cn(
-          "relative flex cursor-pointer items-center gap-1.5 rounded-full px-3 py-1.5 text-[10px] font-medium transition-all duration-300 outline-none",
-          navState === "listening"
-            ? "border border-[#C5961A]/30 bg-[#C5961A]/10 text-[#C5961A] shadow-[0_0_15px_rgba(197,150,26,0.1)]"
-            : navState === "navigating" || navState === "processing"
-              ? "border border-[#C5961A]/20 bg-[#C5961A]/5 text-[#C5961A]/60"
-              : "border border-white/[0.06] bg-white/[0.02] text-white/20 hover:border-[#C5961A]/15 hover:text-white/40",
-        )}
+        className="relative inline-flex cursor-pointer items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-medium transition-all duration-300 outline-none"
+        style={{
+          border:
+            navState === "listening"
+              ? "1px solid color-mix(in oklab, var(--sl-accent) 50%, transparent)"
+              : navState === "navigating" || navState === "processing"
+                ? "1px solid color-mix(in oklab, var(--sl-primary) 30%, transparent)"
+                : "1px solid var(--sl-line)",
+          background:
+            navState === "listening"
+              ? "var(--sl-accent-soft)"
+              : navState === "navigating" || navState === "processing"
+                ? "var(--sl-primary-soft)"
+                : "var(--sl-surface)",
+          color:
+            navState === "listening"
+              ? "#6B2A11"
+              : navState === "navigating" || navState === "processing"
+                ? "var(--sl-primary-ink)"
+                : "var(--sl-ink-3)",
+        }}
       >
         {navState === "navigating" || navState === "processing" ? (
           <Loader2 className="h-3 w-3 animate-spin" />
@@ -112,7 +129,7 @@ export function VoiceNav({ className }: { className?: string }) {
               ? "Processing..."
               : navState === "navigating"
                 ? "Navigating..."
-                : "Voice Nav"}
+                : "Voice nav"}
         </span>
       </motion.button>
     </div>

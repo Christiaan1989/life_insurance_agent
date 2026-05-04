@@ -111,9 +111,14 @@ export function HumanMessage({
             )}
             {/* Render text if present, otherwise fallback to file/image name */}
             {contentString ? (
-              <p className="bg-[#C5961A]/10 border border-[#C5961A]/20 text-white/90 ml-auto w-fit rounded-3xl px-4 py-2 text-right whitespace-pre-wrap">
-                {contentString}
-              </p>
+              <div className="ml-auto flex items-start gap-3">
+                <p className="ml-auto w-fit max-w-[min(100%,680px)] rounded-[18px] bg-[var(--sl-primary)] px-4 py-3 text-left text-[14.5px] leading-[1.55] text-white shadow-[0_8px_16px_-10px_color-mix(in_oklab,var(--sl-primary)_70%,transparent)] whitespace-pre-wrap">
+                  {contentString}
+                </p>
+                <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--sl-accent-soft)] text-[11px] font-semibold text-[var(--sl-ink)]">
+                  You
+                </div>
+              </div>
             ) : null}
           </div>
         )}

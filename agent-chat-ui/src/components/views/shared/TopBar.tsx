@@ -3,9 +3,11 @@
 import { motion } from "framer-motion";
 import { Home, SquarePen } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { VoiceNav } from "./VoiceNav";
+import { TTSToggle } from "./TTSToggle";
 
 interface TopBarProps {
-  /** Label shown in center (e.g., "Policy Q&A", "Claims Filing") */
+  /** Label shown in center (e.g., "Filing a claim", "Policy overview") */
   viewLabel: string;
   /** Callback to navigate home / reset thread */
   onHome: () => void;
@@ -18,8 +20,7 @@ interface TopBarProps {
 }
 
 /**
- * Shared dark top bar for Policy Q&A and Claims views.
- * Glassmorphism style with logo, view label, and navigation.
+ * Shared warm top bar for all view shells.
  */
 export function TopBar({
   viewLabel,
@@ -30,48 +31,52 @@ export function TopBar({
 }: TopBarProps) {
   return (
     <motion.div
-      initial={{ opacity: 0, y: -10 }}
+      initial={{ opacity: 0, y: -8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3, ease: "easeOut" }}
       className={cn(
-        "relative z-20 flex items-center justify-between px-5 py-3",
-        "bg-black/40 backdrop-blur-xl border-b border-white/[0.06]",
+        "relative z-20 flex items-center justify-between px-6 py-3.5",
         className,
       )}
+      style={{
+        background: "var(--sl-bg)",
+        borderBottom: "1px solid var(--sl-line)",
+      }}
     >
-      {/* Left: Logo + title */}
-      <button
-        onClick={onHome}
-        className="flex cursor-pointer items-center gap-3 group"
-      >
-        <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-[#C5961A]/10 group-hover:bg-[#C5961A]/20 transition-colors">
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            className="text-[#C5961A]"
-          >
-            <path
-              d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </div>
-        <span className="text-sm font-semibold text-white/80 group-hover:text-white transition-colors">
-          Sentinel
-        </span>
-      </button>
+      {/* Left: Home + voice controls */}
+      <div className="flex items-center gap-2.5">
+        <button
+          type="button"
+          onClick={onHome}
+          className="sl-btn-sq"
+          aria-label="Home"
+          title="Home"
+        >
+          <Home className="h-4 w-4" />
+        </button>
+        <VoiceNav />
+        <TTSToggle />
+      </div>
 
       {/* Center: View label */}
-      <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2">
-        <div className="h-1.5 w-1.5 rounded-full bg-[#C5961A] animate-pulse" />
-        <span className="text-xs font-medium tracking-wider uppercase text-white/40">
+      <div className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-2 lg:flex">
+        <div
+          className="inline-flex items-center gap-2"
+          style={{
+            background: "var(--sl-surface)",
+            border: "1px solid var(--sl-line)",
+            borderRadius: 999,
+            padding: "5px 12px",
+            fontSize: 12,
+            color: "var(--sl-ink-2)",
+          }}
+        >
+          <span
+            className="h-1.5 w-1.5 rounded-full"
+            style={{ background: "var(--sl-primary)" }}
+          />
           {viewLabel}
-        </span>
+        </div>
       </div>
 
       {/* Right: Actions */}
@@ -79,20 +84,15 @@ export function TopBar({
         {rightContent}
         {onNewThread && (
           <button
+            type="button"
             onClick={onNewThread}
-            className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-white/30 hover:text-white/70 hover:bg-white/5 transition-all"
+            className="sl-btn-sq"
             title="New conversation"
+            aria-label="New conversation"
           >
             <SquarePen className="h-4 w-4" />
           </button>
         )}
-        <button
-          onClick={onHome}
-          className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-white/30 hover:text-white/70 hover:bg-white/5 transition-all"
-          title="Home"
-        >
-          <Home className="h-4 w-4" />
-        </button>
       </div>
     </motion.div>
   );

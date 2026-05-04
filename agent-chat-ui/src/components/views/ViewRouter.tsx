@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useStreamContext } from "@/providers/Stream";
 import {
@@ -12,6 +12,7 @@ import { useQueryState, parseAsBoolean } from "nuqs";
 import { useTTSOrchestrator } from "@/hooks/use-tts-orchestrator";
 import { HomeView } from "./HomeView";
 import { PolicyOverviewView } from "./PolicyOverviewView";
+import { PaymentsView } from "./PaymentsView";
 import { ClaimsView } from "./ClaimsView";
 import { ClaimOutcomeView } from "./ClaimOutcomeView";
 import { DashboardView } from "./DashboardView";
@@ -46,38 +47,46 @@ export function ViewRouter() {
   const [policyNumber, setPolicyNumber] = useState("POL-2024-001");
   const [policySubmitted, setPolicySubmitted] = useState(false);
 
-  const setThreadId = (id: string | null) => {
-    _setThreadId(id);
-    // Reset policy submission flag for new threads
-    if (id === null) {
-      setPolicySubmitted(false);
+  // When true, show the home view without wiping the active thread.
+  // Only handleNewThread does a full reset — handleHome just overlays home.
+  const [overrideHome, setOverrideHome] = useState(false);
+  const prevMessageCountRef = useRef(messages.length);
+
+  // As soon as a new message is submitted from the home view,
+  // drop the override so the agent's set_active_view takes over.
+  useEffect(() => {
+    if (messages.length > prevMessageCountRef.current) {
+      prevMessageCountRef.current = messages.length;
+      setOverrideHome(false);
     }
-  };
+  }, [messages.length]);
 
-  // Determine which view to show:
-  // - If no thread started (no messages), show Home
-  // - Otherwise use the activeView from the agent's tool calls
   const chatStarted = !!threadId || messages.length > 0;
-  const currentView: ViewType = chatStarted ? activeView : "home";
+  const currentView: ViewType = (!chatStarted || overrideHome) ? "home" : activeView;
 
+  // Go home but keep the thread alive — verification state is preserved.
   const handleHome = () => {
-    setThreadId(null);
+    setOverrideHome(true);
   };
 
+  // Full reset — new thread, new conversation.
   const handleNewThread = () => {
-    setThreadId(null);
+    _setThreadId(null);
+    setPolicySubmitted(false);
+    setOverrideHome(false);
   };
 
   const handlePolicySubmitted = () => {
     setPolicySubmitted(true);
+    setOverrideHome(false);
   };
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-[#0a0a0a]">
+    <div className="sl-body flex h-screen w-full overflow-hidden bg-[var(--sl-bg)] text-[var(--sl-ink)]">
       {/* Thread history sidebar */}
       <div className="relative hidden lg:flex">
         <motion.div
-          className="absolute z-30 h-full overflow-hidden border-r border-white/[0.06] bg-[#080808]"
+          className="absolute z-30 h-full overflow-hidden border-r border-[var(--sl-line)] bg-[var(--sl-surface)]"
           style={{ width: 280 }}
           animate={
             isLargeScreen
@@ -134,6 +143,15 @@ export function ViewRouter() {
             )}
             {currentView === "policy_overview" && (
               <PolicyOverviewView
+                policyNumber={policyNumber}
+                policySubmitted={policySubmitted}
+                onPolicySubmitted={handlePolicySubmitted}
+                onHome={handleHome}
+                onNewThread={handleNewThread}
+              />
+            )}
+            {currentView === "payments" && (
+              <PaymentsView
                 policyNumber={policyNumber}
                 policySubmitted={policySubmitted}
                 onPolicySubmitted={handlePolicySubmitted}

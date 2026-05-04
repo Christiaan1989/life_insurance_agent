@@ -146,7 +146,12 @@ export function AssistantMessage({
   }
 
   return (
-    <div className="group mr-auto flex w-full items-start gap-2">
+    <div className="group mr-auto flex w-full items-start gap-3">
+      {!isToolResult && (
+        <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--sl-primary-soft)] text-xs font-semibold text-[var(--sl-primary-ink)]">
+          S
+        </div>
+      )}
       <div className="flex w-full flex-col gap-2">
         {isToolResult ? (
           <>
@@ -160,7 +165,7 @@ export function AssistantMessage({
         ) : (
           <>
             {contentString.length > 0 && (
-              <div className="py-1">
+              <div className="w-fit max-w-[min(100%,720px)] rounded-[18px] border border-[var(--sl-line)] bg-[var(--sl-surface)] px-4 py-3 text-[14.5px] leading-[1.55] text-[var(--sl-ink)] shadow-[var(--sl-shadow-sm)]">
                 <MarkdownText>{contentString}</MarkdownText>
               </div>
             )}
@@ -218,11 +223,14 @@ export function AssistantMessage({
 
 export function AssistantMessageLoading() {
   return (
-    <div className="mr-auto flex items-start gap-2">
-      <div className="bg-muted flex h-8 items-center gap-1 rounded-2xl px-4 py-2">
-        <div className="bg-foreground/50 h-1.5 w-1.5 animate-[pulse_1.5s_ease-in-out_infinite] rounded-full"></div>
-        <div className="bg-foreground/50 h-1.5 w-1.5 animate-[pulse_1.5s_ease-in-out_0.5s_infinite] rounded-full"></div>
-        <div className="bg-foreground/50 h-1.5 w-1.5 animate-[pulse_1.5s_ease-in-out_1s_infinite] rounded-full"></div>
+    <div className="mr-auto flex items-start gap-3">
+      <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--sl-primary-soft)] text-xs font-semibold text-[var(--sl-primary-ink)]">
+        S
+      </div>
+      <div className="flex h-10 items-center gap-1 rounded-[18px] border border-[var(--sl-line)] bg-[var(--sl-surface)] px-4 py-2 shadow-[var(--sl-shadow-sm)]">
+        <div className="h-1.5 w-1.5 animate-[pulse_1.5s_ease-in-out_infinite] rounded-full bg-[var(--sl-ink-4)]"></div>
+        <div className="h-1.5 w-1.5 animate-[pulse_1.5s_ease-in-out_0.5s_infinite] rounded-full bg-[var(--sl-ink-4)]"></div>
+        <div className="h-1.5 w-1.5 animate-[pulse_1.5s_ease-in-out_1s_infinite] rounded-full bg-[var(--sl-ink-4)]"></div>
       </div>
     </div>
   );

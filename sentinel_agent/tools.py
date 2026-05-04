@@ -84,13 +84,14 @@ def set_active_view(view: str) -> str:
         view: One of:
               - "home" — landing / welcome screen
               - "policy_overview" — full policy details, coverage, beneficiaries
+              - "payments" — recent premium payments and payment history
               - "claims" — guided claim filing flow, including document upload
               - "document_upload" — legacy alias for "claims"
               - "claim_outcome" — decision screen with payout breakdown
               - "dashboard" — claims history and policy summary
               - "auth" — identity verification (use request_authentication instead)
     """
-    valid_views = {"home", "policy_overview", "claims", "document_upload", "claim_outcome", "dashboard", "auth"}
+    valid_views = {"home", "policy_overview", "payments", "claims", "document_upload", "claim_outcome", "dashboard", "auth"}
     if view not in valid_views:
         return json.dumps({"error": f"Invalid view '{view}'. Must be one of: {', '.join(sorted(valid_views))}"})
     normalized_view = "claims" if view == "document_upload" else view

@@ -45,15 +45,21 @@ export function logVoiceDebug(source: string, event: string, data?: unknown) {
   if (typeof window === "undefined") return;
   ensureVoiceDebugHelpers();
 
-  const logs = window.__sentinelVoiceLogs!;
-  logs.push({
+  const entry = {
     ts: new Date().toISOString(),
     source,
     event,
     data,
-  });
+  };
+
+  const logs = window.__sentinelVoiceLogs!;
+  logs.push(entry);
 
   if (logs.length > MAX_LOGS) {
     logs.splice(0, logs.length - MAX_LOGS);
   }
+
+  // Keep a low-friction trail in DevTools as well as the downloadable buffer.
+  // This is intentionally compact because Realtime emits a lot of events.
+  console.debug(`[sentinel-voice:${source}] ${event}`, data ?? "");
 }

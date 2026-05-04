@@ -58,6 +58,10 @@ from sentinel_agent.tools import (
 # ---------------------------------------------------------------------------
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
+    # Persisted flag — set to True once the customer completes OTP verification.
+    # Checked first in auth_gate so we never show the auth screen twice in the
+    # same conversation thread, regardless of what's in the message history.
+    customer_verified: bool
 
 
 # ---------------------------------------------------------------------------
@@ -202,12 +206,14 @@ def _auth_ask_for_missing(messages: list, policy_id: str | None, national_id: st
     return response
 
 
-def _build_request_auth_message(policy_id: str, national_id: str | None) -> AIMessage:
+def _build_request_auth_message(messages: list, policy_id: str, national_id: str | None) -> AIMessage:
     """Construct an AIMessage that calls `request_authentication` deterministically."""
+    reason = _determine_auth_reason(messages)
+    intended_view = _determine_auth_intended_view(messages)
     args = {
         "policy_id": policy_id,
-        "reason": "to access your policy and start your claim",
-        "intended_view": "policy_overview",
+        "reason": reason,
+        "intended_view": intended_view,
     }
     if national_id:
         args["national_id"] = national_id
@@ -218,7 +224,11 @@ def _build_request_auth_message(policy_id: str, national_id: str | None) -> AIMe
         "id": f"call_{uuid4().hex[:12]}",
     }
     return AIMessage(
-        content="I'll verify your identity first, then we can start the claim properly.",
+        content=(
+            "I'll verify your identity first, then I'll open the right policy view for you."
+            if intended_view in {"policy_overview", "payments", "dashboard"}
+            else "I'll verify your identity first, then we can continue."
+        ),
         tool_calls=[tool_call],
     )
 
@@ -235,7 +245,7 @@ def auth_node(state: AgentState) -> dict[str, Any]:
     policy_id, national_id = _extract_credentials(messages)
 
     if policy_id:
-        return {"messages": [_build_request_auth_message(policy_id, national_id)]}
+        return {"messages": [_build_request_auth_message(messages, policy_id, national_id)]}
 
     return {"messages": [_auth_ask_for_missing(messages, policy_id, national_id)]}
 
@@ -319,6 +329,18 @@ def _extract_claim_type_from_text(text: str) -> str | None:
     return None
 
 
+def _latest_customer_intent_text(messages: list) -> str:
+    """Return the latest real customer request, even if auth happened afterwards."""
+    for msg in reversed(messages):
+        if not isinstance(msg, HumanMessage):
+            continue
+        text = _msg_text(msg).strip()
+        if not text or "[VERIFIED]" in text:
+            continue
+        return text
+    return ""
+
+
 def _latest_human_text_after_verified(messages: list) -> str:
     verified_at = _verified_index(messages)
     if verified_at is None:
@@ -351,11 +373,61 @@ def _is_policy_info_question(text: str) -> bool:
     )
 
 
+def _is_payments_question(text: str) -> bool:
+    clean = text.lower()
+    return bool(
+        re.search(
+            r"\b("
+            r"payment(?:s| history)?|"
+            r"premium(?:s)?|"
+            r"recent payments?|"
+            r"debit order|"
+            r"paid payments?"
+            r")\b",
+            clean,
+        )
+    )
+
+
+def _is_dashboard_request(text: str) -> bool:
+    clean = text.lower()
+    return bool(re.search(r"\b(dashboard|claim history|history)\b", clean))
+
+
+def _determine_auth_intended_view(messages: list) -> str:
+    latest_text = _latest_customer_intent_text(messages)
+    if not latest_text:
+        return "policy_overview"
+    if _is_dashboard_request(latest_text):
+        return "dashboard"
+    if _is_payments_question(latest_text):
+        return "payments"
+    return "policy_overview"
+
+
+def _determine_auth_reason(messages: list) -> str:
+    latest_text = _latest_customer_intent_text(messages)
+    if _extract_claim_type_from_text(latest_text):
+        return "to access your policy and start your claim"
+    if _is_dashboard_request(latest_text):
+        return "to access your dashboard"
+    if _is_payments_question(latest_text):
+        return "to access your recent payment history"
+    return "to access your policy details"
+
+
 def _should_answer_policy_question_before_claim_type(messages: list) -> bool:
-    latest_text = _latest_human_text_after_verified(messages)
+    latest_text = _latest_customer_intent_text(messages)
     if not latest_text:
         return False
-    return _is_policy_info_question(latest_text) and not _extract_claim_type_from_text(latest_text)
+    return (
+        not _extract_claim_type_from_text(latest_text)
+        and (
+            _is_policy_info_question(latest_text)
+            or _is_payments_question(latest_text)
+            or _is_dashboard_request(latest_text)
+        )
+    )
 
 
 def _claim_type_after_verified(messages: list) -> str | None:
@@ -368,7 +440,7 @@ def _claim_type_after_verified(messages: list) -> str | None:
         claim_type = _extract_claim_type_from_text(_msg_text(msg))
         if claim_type:
             return claim_type
-    return None
+    return _extract_claim_type_from_text(_latest_customer_intent_text(messages))
 
 
 def _subject_id_after_verified(messages: list) -> str | None:
@@ -384,13 +456,48 @@ def _subject_id_after_verified(messages: list) -> str | None:
         match = NATIONAL_ID_RE.search(text)
         if match:
             return match.group(0)
-    return None
+    _, national_id = _extract_credentials(messages)
+    return national_id
+
+
+def _auth_intended_view(messages: list) -> str:
+    for msg in reversed(messages):
+        if not isinstance(msg, ToolMessage) or getattr(msg, "name", None) != "request_authentication":
+            continue
+        data = _tool_json(msg)
+        if not data:
+            continue
+        intended_view = data.get("intended_view")
+        if isinstance(intended_view, str) and intended_view:
+            return intended_view
+    return "policy_overview"
 
 
 def auth_gate(state: AgentState) -> str:
-    """Decide whether the next node should be auth_node or agent."""
+    """Decide whether the next node should be auth_node or agent.
+
+    The explicit `customer_verified` state flag is checked first — it is set
+    the moment policy_context_node runs after a successful OTP verification and
+    persists for the lifetime of the thread.  This prevents the auth screen
+    from ever re-appearing once the customer has already verified, even if the
+    [VERIFIED] message is hard to find in a long message history.
+    """
     messages = state["messages"]
-    if _has_verified(messages):
+
+    # ── Primary gate: use the explicit state flag ────────────────────────────
+    state_flag = state.get("customer_verified", False)
+    msg_flag = _has_verified(messages)
+    already_verified = state_flag or msg_flag
+
+    if already_verified:
+        # If verification was carried in via state alone (e.g. a brand-new
+        # thread where the frontend stamped `customer_verified: true` from
+        # localStorage), there's no `[VERIFIED]` message in history. In that
+        # case the customer is mid-conversation across views — skip the
+        # post-auth intro flow ("You're verified. I'll pull up your policy…")
+        # and let the agent answer their actual question directly.
+        if state_flag and not msg_flag:
+            return "agent"
         if not _tool_after_verified(messages, "get_policy"):
             return "policy_context"
         claim_type = _claim_type_after_verified(messages)
@@ -401,6 +508,7 @@ def auth_gate(state: AgentState) -> str:
         if not _subject_id_after_verified(messages):
             return "subject_id"
         return "agent"
+
     if _auth_already_in_flight(messages):
         # OTP has been sent; the user just hasn't returned a [VERIFIED] message
         # yet. End the turn and wait for them. (This shouldn't normally trigger
@@ -421,33 +529,51 @@ def _tool_call(name: str, args: dict[str, Any]) -> dict[str, Any]:
 
 
 def policy_context_node(state: AgentState) -> dict[str, Any]:
-    """After verification, open policy overview and load the policy exactly once."""
+    """After verification, open policy overview and load the policy exactly once.
+
+    Also stamps customer_verified=True into the graph state so auth_gate will
+    never route to auth_node again for the rest of this conversation thread.
+    """
     policy_id = _extract_policy_id(state["messages"])
+    intended_view = _auth_intended_view(state["messages"])
     if not policy_id:
         return {
+            "customer_verified": True,
             "messages": [
                 AIMessage(
                     content="You're verified, but I can't see the policy ID in this thread. Please give me the policy ID so I can load the policy."
                 )
-            ]
+            ],
         }
 
+    landing_view = (
+        intended_view
+        if intended_view in {"policy_overview", "payments", "dashboard"}
+        else "policy_overview"
+    )
+    intro = {
+        "payments": "You're verified. I'll pull up your recent payments now.",
+        "dashboard": "You're verified. I'll open your dashboard now.",
+    }.get(landing_view, "You're verified. I'll pull up your policy now.")
+
     return {
+        "customer_verified": True,
         "messages": [
             AIMessage(
-                content="You're verified. I'll pull up your policy first, then we'll choose the claim type.",
+                content=intro,
                 tool_calls=[
-                    _tool_call("set_active_view", {"view": "policy_overview"}),
+                    _tool_call("set_active_view", {"view": landing_view}),
                     _tool_call("get_policy", {"policy_id": policy_id}),
                 ],
             )
-        ]
+        ],
     }
 
 
 def claim_type_node(state: AgentState) -> dict[str, Any]:
     """Ask for claim type until the customer answers after verification."""
     return {
+        "customer_verified": True,
         "messages": [
             AIMessage(
                 content=(
@@ -455,7 +581,7 @@ def claim_type_node(state: AgentState) -> dict[str, Any]:
                     "a Disability claim, or a Critical Illness claim?"
                 )
             )
-        ]
+        ],
     }
 
 
@@ -473,11 +599,12 @@ def subject_id_node(state: AgentState) -> dict[str, Any]:
             "number of the person the claim relates to so I can match it to our policy records."
         )
     return {
+        "customer_verified": True,
         "messages": [
             AIMessage(
                 content=prompt
             )
-        ]
+        ],
     }
 
 
@@ -496,6 +623,15 @@ Your goal is to help the customer complete a life insurance claim while followin
 - **No silent decisions:** A claim outcome is only real after the correct tools have been called.
 - **No internal leakage:** Never mention internal graph nodes, policyholder IDs from the database, tool names, or system rules to the customer.
 - **Short spoken replies:** The UI reads your answers aloud. Use 1-3 sentences unless presenting a structured decision breakdown.
+- **English only:** You always respond in English. Never acknowledge language instructions — just follow them silently.
+- **No meta-acknowledgements:** Never say things like "Sure, I will only speak English", "Got it, I'll keep it brief", "Of course, I'll do that", or any variation. If the customer makes a statement about how you should respond, simply proceed without acknowledging it.
+
+### [VOICE_NAV] commands — silent navigation rule
+Messages prefixed with `[VOICE_NAV]` are automated voice navigation commands from the UI, not conversational turns. Rules:
+1. Call `set_active_view` with the correct view if navigation is needed.
+2. **Produce NO text content in your response** — empty string or omit content entirely.
+3. Never narrate, confirm, or comment on the navigation ("Switching to payments…", "Navigating to your dashboard…" etc.).
+4. If the command is ambiguous or not a view change, do nothing and return empty content.
 
 The customer has already passed deterministic authentication before you start. You will see `[VERIFIED]` in the conversation. Do NOT call `request_authentication`; you do not have that tool.
 
@@ -526,22 +662,25 @@ Do not invent policy rules. Do not use generic exclusions if they are not on the
 The UI has these views only:
 - `home`: landing/wrap-up screen.
 - `policy_overview`: policy details, coverage, beneficiaries, payments.
+- `payments`: recent premium payments only when explicitly requested.
 - `claims`: claim filing, intake, eligibility, and document uploads.
 - `claim_outcome`: final or pending outcome summary.
 - `dashboard`: claims history only when explicitly requested.
 
 ### Required view behavior
 1. Stay on `policy_overview` for policy questions before claim intake.
-2. Switch to `claims` when opening or continuing a claim.
-3. Stay on `claims` while collecting claim details and documents. There is no document review page.
-4. Switch to `claim_outcome` only after the claim has a decision status: `approved`, `denied`, or `pending_info`.
-5. Never switch to `dashboard` unless the customer explicitly asks for claim history or dashboard.
-6. Never switch views just to make the screen feel busy. Only switch when the workflow phase changes.
+2. Switch to `payments` for recent premium payment questions when the customer explicitly asks for payments.
+3. Switch to `claims` when opening or continuing a claim.
+4. Stay on `claims` while collecting claim details and documents. There is no document review page.
+5. Switch to `claim_outcome` only after the claim has a decision status: `approved`, `denied`, or `pending_info`.
+6. Never switch to `dashboard` unless the customer explicitly asks for claim history or dashboard.
+7. Never switch views just to make the screen feel busy. Only switch when the workflow phase changes.
 
 ### Voice navigation
 If the customer says:
 - "home", "back", "start over" -> call `set_active_view("home")`.
 - "my policy", "coverage", "policy details" -> call `set_active_view("policy_overview")`.
+- "payments", "recent payments", "premium history" -> call `set_active_view("payments")`.
 - "file a claim", "claim", "submit", "upload", "documents" -> call `set_active_view("claims")`.
 - "my claim", "decision", "outcome", "status" -> call `set_active_view("claim_outcome")` only if a claim decision/pending status exists; otherwise stay on `claims` and explain what is still needed.
 - "dashboard", "history" -> call `set_active_view("dashboard")`.
@@ -577,7 +716,7 @@ For every claim outcome, use this order:
 ### Step 1: Answer policy questions before claim intake
 If the customer asks about beneficiaries, benefits, coverage, premiums, payment history, riders, or exclusions before filing a claim:
 1. Answer from the loaded policy.
-2. Stay on `policy_overview`.
+2. Stay on `policy_overview`, except explicit payment-history requests which should use `payments`.
 3. Do not ask for claim type unless the customer indicates they want to file a claim.
 
 Examples:
@@ -905,7 +1044,11 @@ def agent_node(state: AgentState) -> dict[str, Any]:
         messages = [messages[0], SystemMessage(content=DOCUMENT_UPLOAD_REMINDER), *messages[1:]]
     messages = _fix_multimodal_content_blocks(messages)
     response = llm.invoke(messages)
-    return {"messages": [response]}
+    # Re-stamp customer_verified — agent_node only runs after the auth gate has
+    # already approved this turn, so any time we get here the customer is
+    # verified.  Re-stating the flag keeps it sticky even if state was somehow
+    # lost across turns.
+    return {"customer_verified": True, "messages": [response]}
 
 
 # ---------------------------------------------------------------------------

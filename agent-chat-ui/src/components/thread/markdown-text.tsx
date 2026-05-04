@@ -47,7 +47,7 @@ const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
   };
 
   return (
-    <div className="flex items-center justify-between gap-4 rounded-t-lg bg-zinc-900 px-4 py-2 text-sm font-semibold text-white">
+    <div className="flex items-center justify-between gap-4 rounded-t-lg border border-[var(--sl-line)] bg-[var(--sl-surface-2)] px-4 py-2 text-sm font-semibold text-[var(--sl-ink)]">
       <span className="lowercase [&>span]:text-xs">{language}</span>
       <TooltipIconButton
         tooltip="Copy"
@@ -121,7 +121,7 @@ const defaultComponents: any = {
   a: ({ className, ...props }: { className?: string }) => (
     <a
       className={cn(
-        "font-medium text-[#C5961A] underline underline-offset-2 decoration-[#C5961A]/30 hover:decoration-[#C5961A]",
+        "font-medium text-[var(--sl-primary)] underline underline-offset-2 decoration-[color-mix(in_oklab,var(--sl-primary)_30%,transparent)] hover:decoration-[var(--sl-primary)]",
         className,
       )}
       {...props}
@@ -129,7 +129,7 @@ const defaultComponents: any = {
   ),
   blockquote: ({ className, ...props }: { className?: string }) => (
     <blockquote
-      className={cn("border-l-2 border-[#C5961A]/30 pl-3 text-[15px] italic text-foreground/70", className)}
+      className={cn("border-l-2 border-[color-mix(in_oklab,var(--sl-primary)_30%,transparent)] pl-3 text-[15px] italic text-[var(--sl-ink-2)]", className)}
       {...props}
     />
   ),
@@ -147,7 +147,7 @@ const defaultComponents: any = {
   ),
   hr: ({ className, ...props }: { className?: string }) => (
     <hr
-      className={cn("my-3 border-[#0F2B46]/10", className)}
+      className={cn("my-3 border-[var(--sl-line)]", className)}
       {...props}
     />
   ),
@@ -163,7 +163,7 @@ const defaultComponents: any = {
   th: ({ className, ...props }: { className?: string }) => (
     <th
       className={cn(
-        "bg-white/[0.04] px-3 py-1.5 text-left text-xs font-semibold text-white/60 first:rounded-tl-lg last:rounded-tr-lg [&[align=center]]:text-center [&[align=right]]:text-right",
+        "bg-[var(--sl-surface-2)] px-3 py-1.5 text-left text-xs font-semibold text-[var(--sl-ink-2)] first:rounded-tl-lg last:rounded-tr-lg [&[align=center]]:text-center [&[align=right]]:text-right",
         className,
       )}
       {...props}
@@ -172,7 +172,7 @@ const defaultComponents: any = {
   td: ({ className, ...props }: { className?: string }) => (
     <td
       className={cn(
-        "border-b border-l border-[#0F2B46]/[0.06] px-3 py-1.5 text-left text-[13px] last:border-r [&[align=center]]:text-center [&[align=right]]:text-right",
+        "border-b border-l border-[var(--sl-line)] px-3 py-1.5 text-left text-[13px] last:border-r [&[align=center]]:text-center [&[align=right]]:text-right",
         className,
       )}
       {...props}
@@ -181,7 +181,7 @@ const defaultComponents: any = {
   tr: ({ className, ...props }: { className?: string }) => (
     <tr
       className={cn(
-        "m-0 border-b border-[#0F2B46]/[0.06] p-0 first:border-t [&:last-child>td:first-child]:rounded-bl-lg [&:last-child>td:last-child]:rounded-br-lg",
+        "m-0 border-b border-[var(--sl-line)] p-0 first:border-t [&:last-child>td:first-child]:rounded-bl-lg [&:last-child>td:last-child]:rounded-br-lg",
         className,
       )}
       {...props}
@@ -196,7 +196,7 @@ const defaultComponents: any = {
   pre: ({ className, ...props }: { className?: string }) => (
     <pre
       className={cn(
-        "max-w-4xl overflow-x-auto rounded-lg bg-black text-white",
+        "max-w-4xl overflow-x-auto rounded-lg border border-[var(--sl-line)] bg-[var(--sl-surface-2)] text-[var(--sl-ink)]",
         className,
       )}
       {...props}
@@ -234,7 +234,7 @@ const defaultComponents: any = {
 
     return (
       <code
-        className={cn("rounded bg-white/[0.08] px-1 py-0.5 text-[12px] font-medium text-[#C5961A]", className)}
+        className={cn("rounded bg-[var(--sl-primary-soft)] px-1 py-0.5 text-[12px] font-medium text-[var(--sl-primary-ink)]", className)}
         {...props}
       >
         {children}

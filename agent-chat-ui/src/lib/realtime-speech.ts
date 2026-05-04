@@ -306,7 +306,7 @@ export async function realtimeSpeak(text: string): Promise<boolean> {
       response: {
         conversation: "none",
         output_modalities: ["audio"],
-        instructions: `Speak exactly this text. Do not add, remove, rephrase, or answer anything else:\n\n${trimmed}`,
+        instructions: `Speak in English only. Never switch languages. Speak exactly this text. Do not add, remove, rephrase, or answer anything else:\n\n${trimmed}`,
       },
     });
   });

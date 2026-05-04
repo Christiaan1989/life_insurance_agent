@@ -25,7 +25,7 @@ function ThreadList({
   const [threadId, setThreadId] = useQueryState("threadId");
 
   return (
-    <div className="flex h-full w-full flex-col items-start justify-start gap-1 overflow-y-scroll px-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-track]:bg-transparent">
+    <div className="sl-scroll flex h-full w-full flex-col items-start justify-start gap-1 overflow-y-scroll px-2">
       {threads.map((t) => {
         let itemText = t.thread_id;
         if (
@@ -45,7 +45,7 @@ function ThreadList({
           >
             <Button
               variant="ghost"
-              className="w-[280px] items-start justify-start text-left font-normal"
+              className="w-[260px] items-start justify-start rounded-xl text-left font-normal text-[var(--sl-ink-2)] hover:bg-[var(--sl-surface-2)] hover:text-[var(--sl-ink)]"
               onClick={(e) => {
                 e.preventDefault();
                 onThreadClick?.(t.thread_id);
@@ -64,7 +64,7 @@ function ThreadList({
 
 function ThreadHistoryLoading() {
   return (
-    <div className="flex h-full w-full flex-col items-start justify-start gap-2 overflow-y-scroll [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-300 [&::-webkit-scrollbar-track]:bg-transparent">
+    <div className="sl-scroll flex h-full w-full flex-col items-start justify-start gap-2 overflow-y-scroll">
       {Array.from({ length: 30 }).map((_, i) => (
         <Skeleton
           key={`skeleton-${i}`}
@@ -96,10 +96,10 @@ export default function ThreadHistory() {
 
   return (
     <>
-      <div className="hidden h-screen w-[280px] shrink-0 flex-col items-start justify-start gap-4 bg-[#080808] lg:flex">
-        <div className="flex w-full items-center justify-between border-b border-white/[0.06] px-4 py-2.5">
+      <div className="hidden h-screen w-[280px] shrink-0 flex-col items-start justify-start gap-4 bg-[var(--sl-surface)] lg:flex">
+        <div className="flex w-full items-center justify-between border-b border-[var(--sl-line)] px-4 py-3">
           <Button
-            className="hover:bg-white/5 text-white/30"
+            className="text-[var(--sl-ink-3)] hover:bg-[var(--sl-surface-2)] hover:text-[var(--sl-ink)]"
             variant="ghost"
             onClick={() => setChatHistoryOpen((p) => !p)}
           >
@@ -109,9 +109,19 @@ export default function ThreadHistory() {
               <PanelRightClose className="size-5" />
             )}
           </Button>
-          <h1 className="text-xs font-semibold tracking-wider uppercase text-white/30">
-            History
-          </h1>
+          <div className="flex items-center gap-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-[var(--sl-primary)] text-sm font-bold text-white">
+              S
+            </div>
+            <div>
+              <h1 className="text-sm font-bold text-[var(--sl-ink)]">
+                Sentinel Life
+              </h1>
+              <p className="text-[11px] text-[var(--sl-ink-3)]">
+                Your friendly cover
+              </p>
+            </div>
+          </div>
         </div>
         {threadsLoading ? (
           <ThreadHistoryLoading />

@@ -13,6 +13,8 @@ import {
 
 const spokenAiMessageIds = new Set<string>();
 
+const VOICE_NAV_PREFIX = "[VOICE_NAV]";
+
 function extractAIText(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
@@ -22,6 +24,34 @@ function extractAIText(content: unknown): string {
       .join(" ");
   }
   return "";
+}
+
+function extractHumanText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter((b: Record<string, unknown>) => b.type === "text")
+      .map((b: Record<string, unknown>) => b.text as string)
+      .join(" ");
+  }
+  return "";
+}
+
+/**
+ * Returns true if the last human message before the AI message at `aiIndex`
+ * was a [VOICE_NAV] command. Navigation responses should be silent.
+ */
+function lastHumanWasVoiceNav(messages: unknown[], aiIndex: number): boolean {
+  for (let i = aiIndex - 1; i >= 0; i--) {
+    const m = messages[i] as Record<string, unknown>;
+    if (m.type === "human") {
+      const text = extractHumanText(m.content);
+      return text.trimStart().startsWith(VOICE_NAV_PREFIX);
+    }
+    // skip tool messages in between
+    if (m.type === "ai") break;
+  }
+  return false;
 }
 
 /**
@@ -63,9 +93,16 @@ export function useTTSOrchestrator() {
     }
 
     if (isLoading && ttsEnabled) {
-      const lastNewAI = [...messages]
+      const lastNewAIIndex = [...messages]
+        .map((m, i) => ({ m, i }))
         .reverse()
-        .find((m) => m.type === "ai" && m.id && !oldAiIdsRef.current.has(m.id));
+        .find(({ m }) => m.type === "ai" && m.id && !oldAiIdsRef.current.has(m.id as string));
+
+      const lastNewAI = lastNewAIIndex?.m;
+      const lastNewAIIdx = lastNewAIIndex?.i ?? -1;
+
+      // Don't speak AI responses to [VOICE_NAV] commands — navigation is silent.
+      if (lastNewAI && lastHumanWasVoiceNav(messages, lastNewAIIdx)) return;
 
       if (lastNewAI) {
         const msgId = lastNewAI.id ?? null;
@@ -141,9 +178,23 @@ export function useTTSOrchestrator() {
     }
 
     if (wasLoading && !isLoading) {
-      const lastNewAI = [...messages]
+      const lastNewAIIndexEnd = [...messages]
+        .map((m, i) => ({ m, i }))
         .reverse()
-        .find((m) => m.type === "ai" && m.id && !oldAiIdsRef.current.has(m.id));
+        .find(({ m }) => m.type === "ai" && m.id && !oldAiIdsRef.current.has(m.id as string));
+
+      const lastNewAI = lastNewAIIndexEnd?.m;
+      const lastNewAIIdxEnd = lastNewAIIndexEnd?.i ?? -1;
+
+      // Don't speak AI responses to [VOICE_NAV] commands — navigation is silent.
+      if (lastNewAI && lastHumanWasVoiceNav(messages, lastNewAIIdxEnd)) {
+        if (streamingTTSRef.current) ttsEndStreaming();
+        ttsMsgIdRef.current = null;
+        spokenLengthRef.current = 0;
+        spokenPrefixRef.current = "";
+        streamingTTSRef.current = false;
+        return;
+      }
 
       if (streamingTTSRef.current) {
         if (lastNewAI) {
@@ -178,16 +229,26 @@ export function useTTSOrchestrator() {
   useEffect(() => {
     if (isLoading || !ttsEnabled || ttsSpeaking) return;
 
-    const lastAi = [...messages]
+    const lastAiEntry = [...messages]
+      .map((m, i) => ({ m, i }))
       .reverse()
-      .find((m) => m.type === "ai" && m.id);
+      .find(({ m }) => m.type === "ai" && m.id);
 
-    if (!lastAi?.id || spokenAiMessageIds.has(lastAi.id)) return;
+    if (!lastAiEntry) return;
+    const { m: lastAi, i: lastAiIdx } = lastAiEntry;
+
+    if (!lastAi.id || spokenAiMessageIds.has(lastAi.id as string)) return;
+
+    // Skip AI responses that were triggered by a [VOICE_NAV] command.
+    if (lastHumanWasVoiceNav(messages, lastAiIdx)) {
+      spokenAiMessageIds.add(lastAi.id as string);
+      return;
+    }
 
     const text = extractAIText(lastAi.content);
     if (!text.trim()) return;
 
-    spokenAiMessageIds.add(lastAi.id);
+    spokenAiMessageIds.add(lastAi.id as string);
     ttsSpeak(text);
   }, [isLoading, messages, ttsEnabled, ttsSpeaking]);
 }

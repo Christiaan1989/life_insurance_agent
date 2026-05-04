@@ -22,13 +22,13 @@ export function ToolCalls({
         return (
           <div
             key={idx}
-            className="overflow-hidden rounded-lg border border-white/[0.06]"
+            className="overflow-hidden rounded-[14px] border border-[var(--sl-line)] bg-[var(--sl-surface)] shadow-[var(--sl-shadow-sm)]"
           >
-            <div className="border-b border-white/[0.06] bg-white/[0.03] px-4 py-2">
-              <h3 className="font-medium text-white/80">
+            <div className="border-b border-[var(--sl-line)] bg-[var(--sl-surface-2)] px-4 py-2">
+              <h3 className="font-medium text-[var(--sl-ink)]">
                 {tc.name}
                 {tc.id && (
-                  <code className="ml-2 rounded bg-white/[0.05] px-2 py-1 text-sm">
+                  <code className="sl-mono ml-2 rounded bg-[var(--sl-surface)] px-2 py-1 text-sm text-[var(--sl-ink-2)]">
                     {tc.id}
                   </code>
                 )}
@@ -39,12 +39,12 @@ export function ToolCalls({
                 <tbody className="divide-y divide-gray-200">
                   {Object.entries(args).map(([key, value], argIdx) => (
                     <tr key={argIdx}>
-                      <td className="px-4 py-2 text-sm font-medium whitespace-nowrap text-white/80">
+                      <td className="px-4 py-2 text-sm font-medium whitespace-nowrap text-[var(--sl-ink)]">
                         {key}
                       </td>
-                      <td className="px-4 py-2 text-sm text-white/40">
+                      <td className="px-4 py-2 text-sm text-[var(--sl-ink-2)]">
                         {isComplexValue(value) ? (
-                          <code className="rounded bg-white/[0.03] px-2 py-1 font-mono text-sm break-all">
+                          <code className="sl-mono rounded bg-[var(--sl-surface-2)] px-2 py-1 text-sm break-all">
                             {JSON.stringify(value, null, 2)}
                           </code>
                         ) : (
@@ -95,28 +95,28 @@ export function ToolResult({ message }: { message: ToolMessage }) {
 
   return (
     <div className="mx-auto grid max-w-3xl grid-rows-[1fr_auto] gap-2">
-      <div className="overflow-hidden rounded-lg border border-white/[0.06]">
-        <div className="border-b border-white/[0.06] bg-white/[0.03] px-4 py-2">
+      <div className="overflow-hidden rounded-[14px] border border-[var(--sl-line)] bg-[var(--sl-surface)] shadow-[var(--sl-shadow-sm)]">
+        <div className="border-b border-[var(--sl-line)] bg-[var(--sl-surface-2)] px-4 py-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             {message.name ? (
-              <h3 className="font-medium text-white/80">
+              <h3 className="font-medium text-[var(--sl-ink)]">
                 Tool Result:{" "}
-                <code className="rounded bg-white/[0.05] px-2 py-1">
+                <code className="sl-mono rounded bg-[var(--sl-surface)] px-2 py-1 text-[var(--sl-ink-2)]">
                   {message.name}
                 </code>
               </h3>
             ) : (
-              <h3 className="font-medium text-white/80">Tool Result</h3>
+              <h3 className="font-medium text-[var(--sl-ink)]">Tool Result</h3>
             )}
             {message.tool_call_id && (
-              <code className="ml-2 rounded bg-white/[0.05] px-2 py-1 text-sm">
+              <code className="sl-mono ml-2 rounded bg-[var(--sl-surface)] px-2 py-1 text-sm text-[var(--sl-ink-2)]">
                 {message.tool_call_id}
               </code>
             )}
           </div>
         </div>
         <motion.div
-          className="min-w-full bg-white/[0.05]"
+          className="min-w-full bg-[var(--sl-surface)]"
           initial={false}
           animate={{ height: "auto" }}
           transition={{ duration: 0.3 }}
@@ -147,12 +147,12 @@ export function ToolResult({ message }: { message: ToolMessage }) {
                           : [item[0], item[1]];
                         return (
                           <tr key={argIdx}>
-                            <td className="px-4 py-2 text-sm font-medium whitespace-nowrap text-white/80">
+                            <td className="px-4 py-2 text-sm font-medium whitespace-nowrap text-[var(--sl-ink)]">
                               {key}
                             </td>
-                            <td className="px-4 py-2 text-sm text-white/40">
+                            <td className="px-4 py-2 text-sm text-[var(--sl-ink-2)]">
                               {isComplexValue(value) ? (
-                                <code className="rounded bg-white/[0.03] px-2 py-1 font-mono text-sm break-all">
+                                <code className="sl-mono rounded bg-[var(--sl-surface-2)] px-2 py-1 text-sm break-all">
                                   {JSON.stringify(value, null, 2)}
                                 </code>
                               ) : (
@@ -165,7 +165,7 @@ export function ToolResult({ message }: { message: ToolMessage }) {
                     </tbody>
                   </table>
                 ) : (
-                  <code className="block text-sm">{displayedContent}</code>
+                  <code className="sl-mono block text-sm text-[var(--sl-ink-2)]">{displayedContent}</code>
                 )}
               </motion.div>
             </AnimatePresence>
@@ -176,7 +176,7 @@ export function ToolResult({ message }: { message: ToolMessage }) {
               parsedContent.length > 5)) && (
             <motion.button
               onClick={() => setIsExpanded(!isExpanded)}
-              className="flex w-full cursor-pointer items-center justify-center border-t-[1px] border-white/[0.06] py-2 text-white/40 transition-all duration-200 ease-in-out hover:bg-white/[0.03] hover:text-white/50"
+              className="flex w-full cursor-pointer items-center justify-center border-t border-[var(--sl-line)] py-2 text-[var(--sl-ink-3)] transition-all duration-200 ease-in-out hover:bg-[var(--sl-surface-2)] hover:text-[var(--sl-ink)]"
               initial={{ scale: 1 }}
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}

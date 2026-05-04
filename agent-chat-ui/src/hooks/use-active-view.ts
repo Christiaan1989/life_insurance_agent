@@ -4,6 +4,7 @@ import { Message } from "@langchain/langgraph-sdk";
 export type ViewType =
   | "home"
   | "policy_overview"
+  | "payments"
   | "claims"
   | "claim_outcome"
   | "dashboard"
@@ -51,6 +52,7 @@ function normalizeView(view: unknown): ViewType | null {
   if (
     view === "home" ||
     view === "policy_overview" ||
+    view === "payments" ||
     view === "claims" ||
     view === "claim_outcome" ||
     view === "dashboard" ||

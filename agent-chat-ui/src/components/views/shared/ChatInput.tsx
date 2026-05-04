@@ -56,8 +56,8 @@ function VoiceControls({
       className={cn(
         "flex items-center gap-2 rounded-full px-3 py-2 text-sm transition-all",
         isRecording
-          ? "bg-red-500/20 text-red-400 ring-1 ring-red-500/30"
-          : "text-white/40 hover:text-white/70 hover:bg-white/5",
+          ? "bg-[var(--sl-accent-soft)] text-[#6B2A11] ring-1 ring-[color-mix(in_oklab,var(--sl-accent)_35%,transparent)]"
+          : "text-[var(--sl-ink-3)] hover:bg-[var(--sl-surface-2)] hover:text-[var(--sl-ink)]",
         (disabled || isBusy) && "opacity-40 cursor-not-allowed",
       )}
     >
@@ -65,10 +65,10 @@ function VoiceControls({
         <>
           <Square className="h-4 w-4" />
           <span className="font-medium text-xs">Stop</span>
-          <span className="ml-1 rounded bg-red-500 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+          <span className="ml-1 rounded bg-[var(--sl-accent)] px-1.5 py-0.5 text-[10px] font-semibold text-white">
             REC
           </span>
-          <span className="ml-1 tabular-nums text-xs text-red-400">
+          <span className="ml-1 tabular-nums text-xs text-[#6B2A11]">
             {formatMs(elapsedMs)}
           </span>
         </>
@@ -199,10 +199,8 @@ export function ChatInput({
     <div
       ref={dropRef}
       className={cn(
-        "relative z-10 mx-auto w-full max-w-3xl rounded-2xl transition-all",
-        "bg-white/[0.04] border border-white/[0.08]",
-        "focus-within:border-[#C5961A]/30 focus-within:glow-gold-sm",
-        dragOver && "border-[#C5961A]/50 border-dashed",
+        "sl-composer relative z-10 mx-auto w-full max-w-3xl transition-all",
+        dragOver && "border-dashed border-[var(--sl-primary)]",
         className,
       )}
     >
@@ -233,10 +231,10 @@ export function ChatInput({
             }
           }}
           placeholder={placeholder}
-          className="field-sizing-content resize-none border-none bg-transparent p-3.5 pb-0 text-white/90 shadow-none ring-0 outline-none placeholder:text-white/25 focus:ring-0 focus:outline-none"
+          className="field-sizing-content min-h-9 resize-none border-none bg-transparent p-2 text-[15px] text-[var(--sl-ink)] shadow-none ring-0 outline-none placeholder:text-[var(--sl-ink-4)] focus:ring-0 focus:outline-none"
         />
 
-        <div className="flex items-center gap-3 p-2 pt-3">
+        <div className="flex items-center gap-3 p-1 pt-2">
           <VoiceControls
             disabled={isLoading}
             onTranscript={(text) => {
@@ -257,7 +255,7 @@ export function ChatInput({
               />
               <Label
                 htmlFor="render-tool-calls"
-                className="text-xs text-white/30"
+                className="text-xs text-[var(--sl-ink-3)]"
               >
                 Hide Tools
               </Label>
@@ -268,7 +266,7 @@ export function ChatInput({
             <>
               <Label
                 htmlFor="file-input-shared"
-                className="flex cursor-pointer items-center gap-1.5 text-white/30 hover:text-white/50 transition-colors"
+                className="flex cursor-pointer items-center gap-1.5 text-[var(--sl-ink-3)] transition-colors hover:text-[var(--sl-ink)]"
               >
                 <Plus className="size-4" />
                 <span className="text-xs">Upload</span>
@@ -288,7 +286,7 @@ export function ChatInput({
             <Button
               key="stop"
               onClick={() => stream.stop()}
-              className="ml-auto bg-white/10 text-white/70 hover:bg-white/15"
+              className="ml-auto rounded-full border border-[var(--sl-line)] bg-[var(--sl-surface-2)] text-[var(--sl-ink-2)] hover:bg-[var(--sl-line)]"
               size="sm"
             >
               <LoaderCircle className="h-4 w-4 animate-spin" />
@@ -297,7 +295,7 @@ export function ChatInput({
           ) : (
             <Button
               type="submit"
-              className="ml-auto bg-[#C5961A] text-black font-medium hover:bg-[#d4a520] shadow-md transition-all"
+              className="ml-auto rounded-full bg-[var(--sl-primary)] font-medium text-white shadow-md transition-all hover:bg-[var(--sl-primary-2)]"
               size="sm"
               disabled={isLoading || (!input.trim() && contentBlocks.length === 0)}
             >
