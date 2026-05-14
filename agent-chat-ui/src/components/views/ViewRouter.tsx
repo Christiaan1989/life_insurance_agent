@@ -52,9 +52,10 @@ export function ViewRouter() {
   // Only handleNewThread does a full reset — handleHome just overlays home.
   const [overrideHome, setOverrideHome] = useState(false);
   // Client-side view override for the Products page. Lets the user open
-  // Products from Home without sending a message. Cleared as soon as the
-  // agent navigates anywhere other than `products`/`home`.
+  // Products without sending a message. Cleared only when the agent
+  // navigates away from whatever view was active at pin time.
   const [localView, setLocalView] = useState<ViewType | null>(null);
+  const [localViewAnchor, setLocalViewAnchor] = useState<ViewType | null>(null);
   const prevMessageCountRef = useRef(messages.length);
 
   // As soon as a new message is submitted from the home view,
@@ -66,29 +67,34 @@ export function ViewRouter() {
     }
   }, [messages.length]);
 
-  // If the agent navigates somewhere real, drop the local Products pin.
+  // Drop the local pin only when the agent moves *away* from whatever
+  // view was active at the moment we pinned. This prevents the pin from
+  // self-clearing immediately when the user opens Products from, say,
+  // an active payments view.
   useEffect(() => {
-    if (
-      localView === "products" &&
-      activeView !== "home" &&
-      activeView !== "products"
-    ) {
-      setLocalView(null);
-    }
-  }, [activeView, localView]);
+    if (!localView) return;
+    if (activeView === "products") return;
+    if (activeView === localViewAnchor) return;
+    setLocalView(null);
+    setLocalViewAnchor(null);
+  }, [activeView, localView, localViewAnchor]);
 
   const chatStarted = !!threadId || messages.length > 0;
-  const currentView: ViewType =
-    !chatStarted || overrideHome
-      ? "home"
-      : activeView === "auth"
-        ? "auth"
-        : (localView ?? activeView);
+  const currentView: ViewType = overrideHome
+    ? "home"
+    : activeView === "auth"
+      ? "auth"
+      : localView
+        ? localView
+        : !chatStarted
+          ? "home"
+          : activeView;
 
   // Go home but keep the thread alive — verification state is preserved.
   const handleHome = () => {
     setOverrideHome(true);
     setLocalView(null);
+    setLocalViewAnchor(null);
   };
 
   // Full reset — new thread, new conversation.
@@ -97,6 +103,7 @@ export function ViewRouter() {
     setPolicySubmitted(false);
     setOverrideHome(false);
     setLocalView(null);
+    setLocalViewAnchor(null);
   };
 
   const handlePolicySubmitted = () => {
@@ -105,6 +112,7 @@ export function ViewRouter() {
   };
 
   const handleOpenProducts = () => {
+    setLocalViewAnchor(activeView);
     setLocalView("products");
     setOverrideHome(false);
   };

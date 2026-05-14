@@ -784,6 +784,7 @@ The UI has these views only:
 5. Switch to `claim_outcome` only after the claim has a decision status: `approved`, `denied`, or `pending_info`.
 6. Never switch to `dashboard` unless the customer explicitly asks for claim history or dashboard.
 7. Never switch views just to make the screen feel busy. Only switch when the workflow phase changes.
+8. On the `dashboard` view, your spoken/text reply must be exactly one short sentence — e.g. "Here is your dashboard. Ask me anything." Do not describe charts, sections, fields, layouts, or what the screen shows. The customer reads the dashboard themselves.
 
 ### Voice navigation
 If the customer says:
