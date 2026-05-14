@@ -8,7 +8,8 @@ export type ViewType =
   | "claims"
   | "claim_outcome"
   | "dashboard"
-  | "auth";
+  | "auth"
+  | "products";
 
 /**
  * Auth payload extracted from the most recent `request_authentication` tool
@@ -56,7 +57,8 @@ function normalizeView(view: unknown): ViewType | null {
     view === "claims" ||
     view === "claim_outcome" ||
     view === "dashboard" ||
-    view === "auth"
+    view === "auth" ||
+    view === "products"
   ) {
     return view;
   }

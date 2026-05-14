@@ -17,6 +17,7 @@ import { ClaimsView } from "./ClaimsView";
 import { ClaimOutcomeView } from "./ClaimOutcomeView";
 import { DashboardView } from "./DashboardView";
 import { AuthView } from "./AuthView";
+import { ProductsView } from "./ProductsView";
 import ThreadHistory from "@/components/thread/history";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 
@@ -50,6 +51,10 @@ export function ViewRouter() {
   // When true, show the home view without wiping the active thread.
   // Only handleNewThread does a full reset — handleHome just overlays home.
   const [overrideHome, setOverrideHome] = useState(false);
+  // Client-side view override for the Products page. Lets the user open
+  // Products from Home without sending a message. Cleared as soon as the
+  // agent navigates anywhere other than `products`/`home`.
+  const [localView, setLocalView] = useState<ViewType | null>(null);
   const prevMessageCountRef = useRef(messages.length);
 
   // As soon as a new message is submitted from the home view,
@@ -61,12 +66,29 @@ export function ViewRouter() {
     }
   }, [messages.length]);
 
+  // If the agent navigates somewhere real, drop the local Products pin.
+  useEffect(() => {
+    if (
+      localView === "products" &&
+      activeView !== "home" &&
+      activeView !== "products"
+    ) {
+      setLocalView(null);
+    }
+  }, [activeView, localView]);
+
   const chatStarted = !!threadId || messages.length > 0;
-  const currentView: ViewType = (!chatStarted || overrideHome) ? "home" : activeView;
+  const currentView: ViewType =
+    !chatStarted || overrideHome
+      ? "home"
+      : activeView === "auth"
+        ? "auth"
+        : (localView ?? activeView);
 
   // Go home but keep the thread alive — verification state is preserved.
   const handleHome = () => {
     setOverrideHome(true);
+    setLocalView(null);
   };
 
   // Full reset — new thread, new conversation.
@@ -74,10 +96,16 @@ export function ViewRouter() {
     _setThreadId(null);
     setPolicySubmitted(false);
     setOverrideHome(false);
+    setLocalView(null);
   };
 
   const handlePolicySubmitted = () => {
     setPolicySubmitted(true);
+    setOverrideHome(false);
+  };
+
+  const handleOpenProducts = () => {
+    setLocalView("products");
     setOverrideHome(false);
   };
 
@@ -139,6 +167,16 @@ export function ViewRouter() {
                 policySubmitted={policySubmitted}
                 onOpenHistory={() => setChatHistoryOpen((p) => !p)}
                 historyOpen={chatHistoryOpen ?? false}
+                onOpenProducts={handleOpenProducts}
+              />
+            )}
+            {currentView === "products" && (
+              <ProductsView
+                policyNumber={policyNumber}
+                policySubmitted={policySubmitted}
+                onPolicySubmitted={handlePolicySubmitted}
+                onHome={handleHome}
+                onNewThread={handleNewThread}
               />
             )}
             {currentView === "policy_overview" && (

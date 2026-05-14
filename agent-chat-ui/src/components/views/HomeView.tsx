@@ -14,6 +14,7 @@ import {
   Wallet,
   LayoutDashboard,
   Phone,
+  WalletCards,
 } from "lucide-react";
 import { useSubmitMessage } from "./shared/ChatInput";
 import { TTSToggle } from "./shared/TTSToggle";
@@ -125,6 +126,7 @@ interface HomeViewProps {
   policySubmitted: boolean;
   onOpenHistory?: () => void;
   historyOpen?: boolean;
+  onOpenProducts?: () => void;
 }
 
 export function HomeView({
@@ -134,6 +136,7 @@ export function HomeView({
   policySubmitted,
   onOpenHistory,
   historyOpen,
+  onOpenProducts,
 }: HomeViewProps) {
   const submitMessage = useSubmitMessage();
   const [input, setInput] = useState("");
@@ -381,6 +384,13 @@ export function HomeView({
             label="Open dashboard"
             onClick={() => handleSuggestion("Show me my dashboard")}
           />
+          {onOpenProducts && (
+            <SuggestChip
+              icon={<WalletCards size={14} />}
+              label="View products"
+              onClick={onOpenProducts}
+            />
+          )}
         </motion.div>
 
         <motion.div
