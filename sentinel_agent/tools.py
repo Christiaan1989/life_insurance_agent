@@ -6,6 +6,11 @@ Each tool wraps an HTTP call to the Sentinel Life API (port 8001).
 import json
 import os
 import re
+import sys
+import tempfile
+import base64
+import binascii
+import site
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -19,6 +24,17 @@ DEV_MODE = os.getenv("SENTINEL_DEV_MODE", "false").lower() == "true"
 
 _HEADERS = {"X-API-Key": API_KEY}
 _REPORTS_DIR = Path(__file__).resolve().parent.parent / "reports"
+_DEATH_CERTIFICATES_DIR = Path(__file__).resolve().parent.parent / "Death Certificates"
+_PROJECT_VENV_SITE = Path(__file__).resolve().parent.parent / ".venv" / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
+
+_DEATH_CERTIFICATE_NAME_PATTERNS = [
+    re.compile(r"\bdeath\s*cert(?:ificate)?\b", re.IGNORECASE),
+    re.compile(r"\bcertificate\s+of\s+death\b", re.IGNORECASE),
+    re.compile(r"\bdeceased\s+cert(?:ificate)?\b", re.IGNORECASE),
+    re.compile(r"\bbi[-_\s]?1663\b", re.IGNORECASE),
+    re.compile(r"\bdha[-_\s]?(?:death|1663)\b", re.IGNORECASE),
+    re.compile(r"(?:^|[^A-Za-z0-9])DC(?:[^A-Za-z0-9]|\d|$)"),
+]
 
 
 def _url(path: str) -> str:
@@ -70,6 +86,236 @@ def _pdf_safe(text: str) -> str:
         .replace("\u201c", '"').replace("\u201d", '"')
         .replace("\u2026", "...").replace("\u2022", "-")
         .replace("\u2192", "->")
+    )
+
+
+def is_likely_death_certificate_filename(filename: str | None) -> bool:
+    """Return true when an uploaded filename likely refers to a death certificate."""
+    if not filename:
+        return False
+    basename = Path(filename).name
+    stem = Path(basename).stem
+    normalized = re.sub(r"[^a-z0-9]+", " ", stem.lower()).strip()
+    if any(
+        phrase in normalized
+        for phrase in (
+            "death cert",
+            "death certificate",
+            "certificate of death",
+            "deceased cert",
+            "deceased certificate",
+            "bi 1663",
+            "dha death",
+            "dha 1663",
+        )
+    ):
+        return True
+    if any(pattern.search(stem) for pattern in _DEATH_CERTIFICATE_NAME_PATTERNS):
+        return True
+    tokens = [t for t in re.split(r"[^A-Za-z0-9]+", stem) if t]
+    return any(t.upper() == "DC" or re.fullmatch(r"DC\d+", t.upper()) for t in tokens)
+
+
+def _decode_file_data(file_data_base64: str) -> bytes:
+    data = file_data_base64.strip()
+    if data.startswith("data:"):
+        _, _, data = data.partition(",")
+    try:
+        return base64.b64decode(data, validate=True)
+    except binascii.Error:
+        return base64.b64decode(data)
+
+
+def _suffix_for_upload(file_name: str, mime_type: str | None = None) -> str:
+    suffix = Path(file_name).suffix.lower()
+    if suffix:
+        return suffix
+    if mime_type == "application/pdf":
+        return ".pdf"
+    if mime_type and mime_type.startswith("image/"):
+        ext = mime_type.split("/", 1)[1].lower().replace("jpeg", "jpg")
+        return f".{ext}"
+    return ".bin"
+
+
+def _certificate_analyzer_class():
+    if not _DEATH_CERTIFICATES_DIR.exists():
+        raise FileNotFoundError(f"Death certificate analyzer folder not found: {_DEATH_CERTIFICATES_DIR}")
+    if _PROJECT_VENV_SITE.exists() and str(_PROJECT_VENV_SITE) not in sys.path:
+        site.addsitedir(str(_PROJECT_VENV_SITE))
+    cert_dir = str(_DEATH_CERTIFICATES_DIR)
+    if cert_dir not in sys.path:
+        sys.path.insert(0, cert_dir)
+    from certificate_forensics import CertificateForensicAnalyzer
+    return CertificateForensicAnalyzer
+
+
+def _compact_forensic_checks(raw_checks: dict[str, Any]) -> list[dict[str, Any]]:
+    compact: list[dict[str, Any]] = []
+    for name, check in raw_checks.items():
+        if not isinstance(check, dict):
+            continue
+        flags = check.get("flags") or []
+        penalty = float(check.get("penalty") or 0)
+        skipped = bool(check.get("skipped"))
+        if skipped and not flags:
+            continue
+        if penalty <= 0 and not flags:
+            continue
+        compact.append({
+            "name": name,
+            "penalty": round(penalty, 4),
+            "flags": flags,
+            "skipped": skipped,
+            "skip_reason": check.get("skip_reason") or "",
+        })
+    return compact
+
+
+def _death_certificate_forensics_payload(
+    file_name: str,
+    file_data_base64: str,
+    mime_type: Optional[str] = None,
+    claim_id: Optional[str] = None,
+) -> dict[str, Any]:
+    if not is_likely_death_certificate_filename(file_name):
+        return {
+            "file_name": file_name,
+            "document_type": "unknown",
+            "analysis_available": False,
+            "error": "Filename does not look like a death certificate.",
+            "decision_hint": "not_applicable",
+        }
+
+    try:
+        file_bytes = _decode_file_data(file_data_base64)
+    except Exception as exc:
+        return {
+            "file_name": file_name,
+            "document_type": "death_certificate",
+            "analysis_available": False,
+            "error": f"Could not decode uploaded file data: {exc}",
+            "risk_level": "MEDIUM",
+            "recommendation": "FLAG_FOR_REVIEW",
+            "requires_review": True,
+            "decision_hint": "pending_info",
+        }
+
+    suffix = _suffix_for_upload(file_name, mime_type)
+    temp_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(prefix="sentinel_dc_", suffix=suffix, delete=False) as tmp:
+            tmp.write(file_bytes)
+            temp_path = tmp.name
+
+        Analyzer = _certificate_analyzer_class()
+        result = Analyzer().analyze(temp_path).to_dict()
+        score = int(result.get("overall_score", 0))
+        fraud_score = max(0, min(100, 100 - score))
+        risk_level = str(result.get("risk_level", "MEDIUM"))
+        recommendation = str(result.get("recommendation", "FLAG_FOR_REVIEW"))
+        fraudulent = risk_level == "HIGH" or recommendation == "FLAG_URGENT" or score < 40
+        requires_review = risk_level == "MEDIUM" or recommendation == "FLAG_FOR_REVIEW"
+
+        if fraudulent:
+            decision_hint = "deny"
+            summary = (
+                f"High death-certificate fraud risk: integrity score {score}/100 "
+                f"(fraud score {fraud_score}/100), risk {risk_level}."
+            )
+        elif requires_review:
+            decision_hint = "pending_info"
+            summary = (
+                f"Death-certificate forensic review needs human review: integrity score {score}/100 "
+                f"(fraud score {fraud_score}/100), risk {risk_level}."
+            )
+        else:
+            decision_hint = "continue"
+            summary = (
+                f"Death-certificate forensic review passed: integrity score {score}/100 "
+                f"(fraud score {fraud_score}/100), risk {risk_level}."
+            )
+
+        payload = {
+            "file_name": file_name,
+            "document_type": "death_certificate",
+            "analysis_available": True,
+            "overall_score": score,
+            "fraud_score": fraud_score,
+            "risk_level": risk_level,
+            "recommendation": recommendation,
+            "fraudulent": fraudulent,
+            "requires_review": requires_review,
+            "decision_hint": decision_hint,
+            "summary": summary,
+            "flags": result.get("flags", []),
+            "notable_checks": _compact_forensic_checks(result.get("checks", {})),
+            "processing_ms": result.get("processing_ms"),
+        }
+    except Exception as exc:
+        payload = {
+            "file_name": file_name,
+            "document_type": "death_certificate",
+            "analysis_available": False,
+            "error": str(exc),
+            "risk_level": "MEDIUM",
+            "recommendation": "FLAG_FOR_REVIEW",
+            "requires_review": True,
+            "decision_hint": "pending_info",
+            "summary": "Death-certificate forensic review could not complete; manual review is required before approval.",
+        }
+    finally:
+        if temp_path:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+
+    if claim_id and payload.get("document_type") == "death_certificate":
+        _post(f"/claims/{claim_id}/events", json={
+            "event_type": "document_received",
+            "message": f"Death certificate forensic analysis completed for {file_name}.",
+            "payload": {"death_certificate_forensics": payload},
+        })
+
+    return payload
+
+
+@tool
+def analyze_death_certificate_forensics(
+    file_name: str,
+    file_data_base64: str,
+    mime_type: Optional[str] = None,
+    claim_id: Optional[str] = None,
+) -> str:
+    """Run forensic fraud analysis on an uploaded death certificate PDF or image.
+
+    Use this only for documents whose filename indicates a death certificate,
+    including names containing "DC", "death certificate", "death cert",
+    "certificate of death", "deceased certificate", "BI-1663", or DHA death
+    certificate wording.
+
+    The tool checks PDF/image metadata, structure, signatures, compression,
+    error-level/noise consistency, and other tamper indicators. It returns a
+    compact dictionary with:
+    - overall_score: 0-100 integrity score, where 100 means no anomalies
+    - fraud_score: 0-100 inverse score, where higher means more suspicious
+    - risk_level: CLEAN, LOW, MEDIUM, or HIGH
+    - recommendation: PASS, PASS_WITH_NOTE, FLAG_FOR_REVIEW, or FLAG_URGENT
+    - fraudulent: true for high-risk certificates that should deny the claim
+    - decision_hint: deny, pending_info, continue, or not_applicable
+
+    Do not create a PDF report from this analysis.
+
+    Args:
+        file_name: Original uploaded filename.
+        file_data_base64: Uploaded file bytes as base64 or a data URL.
+        mime_type: MIME type, e.g. application/pdf or image/jpeg.
+        claim_id: Current claim UUID, if already opened, so the analysis can be logged.
+    """
+    return json.dumps(
+        _death_certificate_forensics_payload(file_name, file_data_base64, mime_type, claim_id),
+        indent=2,
     )
 
 
@@ -545,6 +791,27 @@ def _claim_documents_text_blob(documents: list[dict[str, Any]], document_type: s
     return " ".join(parts).lower()
 
 
+def _without_forensic_metadata(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            k: _without_forensic_metadata(v)
+            for k, v in value.items()
+            if k not in {"forensic_analysis", "death_certificate_forensics"}
+        }
+    if isinstance(value, list):
+        return [_without_forensic_metadata(item) for item in value]
+    return value
+
+
+def _claim_evidence_text_blob(documents: list[dict[str, Any]], document_type: str | None = None) -> str:
+    cleaned_docs: list[dict[str, Any]] = []
+    for doc in documents:
+        cleaned = dict(doc)
+        cleaned["extracted_data"] = _without_forensic_metadata(doc.get("extracted_data"))
+        cleaned_docs.append(cleaned)
+    return _claim_documents_text_blob(cleaned_docs, document_type)
+
+
 def _compact_text(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", value.lower())
 
@@ -648,6 +915,59 @@ def _policyholder_match_status(documents: list[dict[str, Any]], policy: dict[str
         id_status = "mismatched"
 
     return name_status, id_status, doc_name or None, doc_id or None
+
+
+def _find_death_certificate_forensics(claim: dict[str, Any], death_certs: list[dict[str, Any]]) -> dict[str, Any] | None:
+    candidates: list[dict[str, Any]] = []
+
+    def collect(value: Any) -> None:
+        if isinstance(value, dict):
+            direct = value.get("death_certificate_forensics") or value.get("forensic_analysis")
+            if isinstance(direct, dict):
+                candidates.append(direct)
+            elif {
+                "overall_score",
+                "risk_level",
+                "recommendation",
+            }.issubset(value.keys()):
+                candidates.append(value)
+            for nested in value.values():
+                if isinstance(nested, (dict, list)):
+                    collect(nested)
+        elif isinstance(value, list):
+            for item in value:
+                collect(item)
+
+    for doc in death_certs:
+        collect(doc.get("extracted_data"))
+
+    for event in claim.get("events", []) or []:
+        collect(event.get("payload"))
+
+    if not candidates:
+        return None
+    latest = candidates[-1]
+    score = latest.get("overall_score")
+    try:
+        score_int = int(score)
+    except (TypeError, ValueError):
+        score_int = None
+    risk_level = str(latest.get("risk_level", "")).upper()
+    recommendation = str(latest.get("recommendation", "")).upper()
+    if "fraudulent" not in latest:
+        latest = dict(latest)
+        latest["fraudulent"] = (
+            risk_level == "HIGH"
+            or recommendation == "FLAG_URGENT"
+            or (score_int is not None and score_int < 40)
+        )
+    if "requires_review" not in latest:
+        latest = dict(latest)
+        latest["requires_review"] = risk_level == "MEDIUM" or recommendation == "FLAG_FOR_REVIEW"
+    if "fraud_score" not in latest and score_int is not None:
+        latest = dict(latest)
+        latest["fraud_score"] = max(0, min(100, 100 - score_int))
+    return latest
 
 
 def _evaluate_claim_evidence_payload(claim: dict[str, Any], policy: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -783,7 +1103,44 @@ def _evaluate_claim_evidence_payload(claim: dict[str, Any], policy: dict[str, An
             return finalize()
 
         add_check("Death Certificate Present", True, f"{len(death_certs)} death certificate document(s) recorded.")
-        blob = _claim_documents_text_blob(documents)
+        forensic = _find_death_certificate_forensics(claim, death_certs)
+        if not forensic:
+            add_check(
+                "Death Certificate Forensic Review Completed",
+                False,
+                "The death certificate has not yet passed the forensic fraud screen.",
+            )
+            result["reason"] = "The death certificate must be screened for fraud before this death claim can be finalised."
+            return finalize()
+
+        result["death_certificate_forensics"] = forensic
+        score = forensic.get("overall_score", "N/A")
+        fraud_score = forensic.get("fraud_score", "N/A")
+        risk = forensic.get("risk_level", "UNKNOWN")
+        recommendation = forensic.get("recommendation", "UNKNOWN")
+        forensic_detail = (
+            f"Integrity score {score}/100; fraud score {fraud_score}/100; "
+            f"risk {risk}; recommendation {recommendation}."
+        )
+        if forensic.get("fraudulent"):
+            add_check("Death Certificate Fraud Screen Passed", False, forensic_detail)
+            result["recommended_status"] = "denied"
+            result["reason"] = (
+                "The death certificate forensic review returned a high fraud risk, "
+                f"so the claim cannot be approved. {forensic_detail}"
+            )
+            return finalize()
+        if forensic.get("requires_review"):
+            add_check("Death Certificate Fraud Screen Passed", False, forensic_detail)
+            result["recommended_status"] = "pending_info"
+            result["reason"] = (
+                "The death certificate forensic review found anomalies that require manual review before approval. "
+                f"{forensic_detail}"
+            )
+            return finalize()
+
+        add_check("Death Certificate Fraud Screen Passed", True, forensic_detail)
+        blob = _claim_evidence_text_blob(documents)
         if policy:
             add_check(
                 "Document Name Matches Policyholder",

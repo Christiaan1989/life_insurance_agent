@@ -1,0 +1,16 @@
+# Core dependencies
+Pillow>=10.0.0
+numpy>=1.24.0
+PyMuPDF>=1.23.0          # fitz — PDF parsing, rendering, and report generation
+pyexiftool>=0.5.5
+python-magic-bin>=0.4.14 ; sys_platform == "win32"
+python-magic>=0.4.27     ; sys_platform != "win32"
+cryptography>=41.0.0
+
+# Note: jpegio was evaluated for DCT coefficient analysis but fails to build on
+# Windows (requires C compilation). Double-compression detection is implemented
+# instead via Pillow quantization table analysis and JPEG ghost detection.
+
+# Note: pytesseract / Tesseract OCR has been removed. SA-specific text checks
+# (BI-1663 markers, field validation, SA ID Luhn) are better handled by a
+# vision-capable LLM — see certificate_forensics/sa_checks.py for details.

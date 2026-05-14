@@ -37,6 +37,8 @@ from langgraph.prebuilt import ToolNode
 from typing_extensions import TypedDict
 
 from sentinel_agent.tools import (
+    _death_certificate_forensics_payload,
+    analyze_death_certificate_forensics,
     calculate_payout,
     check_eligibility,
     create_claim,
@@ -49,6 +51,7 @@ from sentinel_agent.tools import (
     request_authentication,
     send_claim_email,
     set_active_view,
+    is_likely_death_certificate_filename,
     update_claim,
 )
 
@@ -130,6 +133,49 @@ def _uploaded_filenames(msg: HumanMessage) -> list[str]:
         if name:
             names.append(str(name))
     return names
+
+
+def _uploaded_file_blocks(msg: HumanMessage) -> list[dict[str, str]]:
+    files: list[dict[str, str]] = []
+    for block in _msg_content_blocks(msg):
+        if block.get("type") not in {"file", "image"}:
+            continue
+        metadata = block.get("metadata") if isinstance(block.get("metadata"), dict) else {}
+        source = block.get("source") if isinstance(block.get("source"), dict) else {}
+        file_obj = block.get("file") if isinstance(block.get("file"), dict) else {}
+        name = (
+            metadata.get("filename")
+            or metadata.get("name")
+            or block.get("filename")
+            or block.get("name")
+            or file_obj.get("filename")
+        )
+        data = source.get("data") or block.get("data") or file_obj.get("file_data") or ""
+        mime_type = (
+            source.get("media_type")
+            or block.get("mimeType")
+            or block.get("mime_type")
+            or block.get("media_type")
+            or ("application/pdf" if block.get("type") == "file" else "image/png")
+        )
+        if name and data:
+            files.append({"name": str(name), "data": str(data), "mime_type": str(mime_type)})
+    return files
+
+
+def _latest_death_certificate_upload_needs_forensics(messages: list) -> bool:
+    upload_index = _latest_human_upload_index(messages)
+    if upload_index is None:
+        return False
+    upload = messages[upload_index]
+    if not isinstance(upload, HumanMessage):
+        return False
+    if not any(is_likely_death_certificate_filename(f["name"]) for f in _uploaded_file_blocks(upload)):
+        return False
+    for msg in messages[upload_index + 1:]:
+        if isinstance(msg, ToolMessage) and getattr(msg, "name", None) == "analyze_death_certificate_forensics":
+            return False
+    return True
 
 
 def _parse_jsonish(value: Any) -> Any:
@@ -497,6 +543,8 @@ def auth_gate(state: AgentState) -> str:
         # post-auth intro flow ("You're verified. I'll pull up your policy…")
         # and let the agent answer their actual question directly.
         if state_flag and not msg_flag:
+            if _latest_death_certificate_upload_needs_forensics(messages):
+                return "death_certificate_forensics"
             return "agent"
         if not _tool_after_verified(messages, "get_policy"):
             return "policy_context"
@@ -507,6 +555,8 @@ def auth_gate(state: AgentState) -> str:
             return "claim_type"
         if not _subject_id_after_verified(messages):
             return "subject_id"
+        if _latest_death_certificate_upload_needs_forensics(messages):
+            return "death_certificate_forensics"
         return "agent"
 
     if _auth_already_in_flight(messages):
@@ -608,6 +658,57 @@ def subject_id_node(state: AgentState) -> dict[str, Any]:
     }
 
 
+def death_certificate_forensics_node(state: AgentState) -> dict[str, Any]:
+    """Run forensic analysis for uploaded death certificates before the LLM decides."""
+    upload = _latest_human_upload(state["messages"])
+    claim_id = _latest_claim_id(state["messages"])
+    files = []
+    if upload:
+        files = [
+            f for f in _uploaded_file_blocks(upload)
+            if is_likely_death_certificate_filename(f["name"])
+        ]
+
+    if not files:
+        return {"customer_verified": True, "messages": []}
+
+    tool_calls: list[dict[str, Any]] = []
+    tool_results: list[ToolMessage] = []
+    for file in files:
+        call_id = f"call_{uuid4().hex[:12]}"
+        tool_calls.append({
+            "name": "analyze_death_certificate_forensics",
+            "args": {
+                "file_name": file["name"],
+                "mime_type": file["mime_type"],
+                "claim_id": claim_id,
+            },
+            "id": call_id,
+        })
+        result = _death_certificate_forensics_payload(
+            file_name=file["name"],
+            file_data_base64=file["data"],
+            mime_type=file["mime_type"],
+            claim_id=claim_id,
+        )
+        tool_results.append(ToolMessage(
+            content=json.dumps(result, indent=2),
+            name="analyze_death_certificate_forensics",
+            tool_call_id=call_id,
+        ))
+
+    return {
+        "customer_verified": True,
+        "messages": [
+            AIMessage(
+                content="I'll check the death certificate integrity before making a claim decision.",
+                tool_calls=tool_calls,
+            ),
+            *tool_results,
+        ],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Main agent — handles everything *after* verification
 # ---------------------------------------------------------------------------
@@ -698,7 +799,8 @@ Tool calls are not optional when a workflow step requires them.
 4. Do not say a claim is approved, denied, or pending before calling `update_claim` with that exact status.
 5. Do not show the outcome page before calling `update_claim` and then `set_active_view("claim_outcome")`.
 6. Do not calculate payout unless `evaluate_claim_evidence` says `eligible_for_payout: true`.
-7. If you accidentally realize you have enough information for a required tool, call the tool first. Do not answer in prose first.
+7. Death certificates must pass `analyze_death_certificate_forensics` before final evidence evaluation. Filenames containing `DC`, `death certificate`, `death cert`, `certificate of death`, `deceased certificate`, `BI-1663`, or DHA death wording count as death certificates for this tool.
+8. If you accidentally realize you have enough information for a required tool, call the tool first. Do not answer in prose first.
 
 ### Required final-decision order
 For every claim outcome, use this order:
@@ -782,14 +884,18 @@ For each uploaded document:
    - `medical_report`
    - `post_mortem_report` for post-mortem, autopsy, or forensic pathology reports
    - `other` for supporting documents that do not fit the categories above
-3. Call `record_document` with:
+3. If the filename indicates a death certificate (`DC`, `death certificate`, `death cert`, `certificate of death`, `deceased certificate`, `BI-1663`, or DHA death wording), ensure `analyze_death_certificate_forensics` has run for that upload before the claim is evaluated. Use its result as a hard fraud screen:
+   - `decision_hint="deny"` or `fraudulent=true` -> the death claim must be denied.
+   - `decision_hint="pending_info"` or `requires_review=true` -> mark pending review, not approved.
+   - `decision_hint="continue"` -> continue normal evidence and payout checks.
+4. Call `record_document` with:
    - `claim_id`
    - `document_type`
    - `document_name`
-   - `extracted_data` as JSON string
-   - `validation_status`
-4. If the document includes ICD-10 or diagnosis details, call `update_claim` with `icd10_code` and/or `diagnosis_description`.
-5. Call `evaluate_claim_evidence(claim_id)`.
+   - `extracted_data` as JSON string. For death certificates, include the forensic result under `forensic_analysis` when available.
+   - `validation_status`; use `invalid` for high fraud risk, `requires_review` for medium/review results, and `valid` for clean/low risk.
+5. If the document includes ICD-10 or diagnosis details, call `update_claim` with `icd10_code` and/or `diagnosis_description`.
+6. Call `evaluate_claim_evidence(claim_id)`.
 
 ### Required extraction fields
 For a death certificate, extract:
@@ -843,6 +949,10 @@ Sentinel pays disability benefits only for total and permanent disability.
 
 ### Death
 - Death certificate is mandatory.
+- A death certificate forensic fraud screen is mandatory before approval.
+- High fraud risk or `FLAG_URGENT` forensic recommendation -> deny the claim and include the integrity score, fraud score, risk level, and key flags in the decision reason.
+- Medium risk or `FLAG_FOR_REVIEW` forensic recommendation -> pending_info for manual certificate review.
+- Clean/low risk -> include the forensic score in the approval rationale.
 - Name and ID must match the policyholder.
 - If death is accidental, unnatural, unexplained, or post-mortem is indicated, a post-mortem report is required.
 - If document policy reference differs from the loaded policy, treat it as a warning only if name and ID match.
@@ -870,9 +980,11 @@ Sentinel pays disability benefits only for total and permanent disability.
 | Incident before policy start | denied |
 | Disability evidence says partial, borderline, temporary, or not TPD | denied |
 | Evidence triggers an exclusion listed on this policy | denied |
+| Death certificate forensic fraud risk is high / urgent | denied |
 | Required document missing | pending_info |
 | Name or ID not clearly extracted | pending_info |
 | Name or ID conflicts with policyholder | pending_info |
+| Death certificate forensic risk requires review | pending_info |
 | Death is accidental/unnatural and post-mortem missing | pending_info |
 | Disability second opinion requested | pending_info |
 | Critical illness diagnosis provisional/pending | pending_info |
@@ -944,6 +1056,7 @@ AGENT_TOOLS = [
     log_event,
     check_eligibility,
     record_document,
+    analyze_death_certificate_forensics,
     evaluate_claim_evidence,
     calculate_payout,
     generate_claim_report,
@@ -962,14 +1075,15 @@ DOCUMENT_UPLOAD_REMINDER = """\
 The latest customer message contains uploaded claim evidence.
 
 Before writing any customer-facing conclusion about the document, you must call tools in this order:
-1. `record_document` for every uploaded document, with extracted_data JSON.
-2. `update_claim` if ICD-10 or diagnosis fields were extracted.
-3. `evaluate_claim_evidence`.
-4. Based on that tool result:
+1. If any uploaded filename looks like a death certificate (`DC`, `death certificate`, `death cert`, `certificate of death`, `deceased certificate`, `BI-1663`, or DHA death wording), use the `analyze_death_certificate_forensics` result already in the thread, or call it before evidence evaluation if it has not run.
+2. `record_document` for every uploaded document, with extracted_data JSON. For death certificates, include `forensic_analysis` and set validation_status from the forensic result.
+3. `update_claim` if ICD-10 or diagnosis fields were extracted.
+4. `evaluate_claim_evidence`.
+5. Based on that tool result:
    - pending_info/denied: call `update_claim`, then `set_active_view("claim_outcome")`, then `log_event`.
    - approved: call `calculate_payout`, then `update_claim`, then `set_active_view("claim_outcome")`, then `log_event`.
 
-Do not answer from the PDF/image in prose only. The claim state must be updated through tools first.
+Death-certificate fraud findings must appear in the decision reason: include integrity score, fraud score, risk level, and the most important flags or note that no serious flags were found. Do not answer from the PDF/image in prose only. The claim state must be updated through tools first.
 """
 
 
@@ -1064,6 +1178,7 @@ ALL_TOOLS = [
     log_event,
     check_eligibility,
     record_document,
+    analyze_death_certificate_forensics,
     evaluate_claim_evidence,
     calculate_payout,
     generate_claim_report,
@@ -1097,6 +1212,9 @@ def after_tools(state: AgentState) -> str:
             if getattr(msg, "name", None) == "request_authentication":
                 return END
             break
+    if state.get("customer_verified", False) or _has_verified(state["messages"]):
+        if _latest_death_certificate_upload_needs_forensics(state["messages"]):
+            return "death_certificate_forensics"
     if _has_verified(state["messages"]):
         claim_type = _claim_type_after_verified(state["messages"])
         if not claim_type:
@@ -1116,6 +1234,7 @@ workflow.add_node("auth_node", auth_node)
 workflow.add_node("policy_context", policy_context_node)
 workflow.add_node("claim_type", claim_type_node)
 workflow.add_node("subject_id", subject_id_node)
+workflow.add_node("death_certificate_forensics", death_certificate_forensics_node)
 workflow.add_node("agent", agent_node)
 workflow.add_node("tools", tool_node)
 
@@ -1128,6 +1247,7 @@ workflow.add_conditional_edges(
         "policy_context": "policy_context",
         "claim_type": "claim_type",
         "subject_id": "subject_id",
+        "death_certificate_forensics": "death_certificate_forensics",
         "agent": "agent",
         END: END,
     },
@@ -1137,6 +1257,7 @@ workflow.add_conditional_edges("auth_node", after_auth, {"tools": "tools", END: 
 workflow.add_conditional_edges("policy_context", after_auth, {"tools": "tools", END: END})
 workflow.add_edge("claim_type", END)
 workflow.add_edge("subject_id", END)
+workflow.add_edge("death_certificate_forensics", "agent")
 workflow.add_conditional_edges("agent", after_agent, {"tools": "tools", END: END})
 workflow.add_conditional_edges(
     "tools",
@@ -1144,6 +1265,7 @@ workflow.add_conditional_edges(
     {
         "claim_type": "claim_type",
         "subject_id": "subject_id",
+        "death_certificate_forensics": "death_certificate_forensics",
         "agent": "agent",
         END: END,
     },
