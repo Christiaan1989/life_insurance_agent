@@ -155,6 +155,23 @@ export function ClaimOutcomeView({
     .filter((line) => line.startsWith("PASS:"))
     .map(cleanBreakdownLine)
     .slice(0, 4);
+  const isApproved =
+    claimState.claimStatus === "approved" || claimState.claimStatus === "accepted";
+  const failLines = claimState.decisionBreakdown
+    .filter((line) => line.startsWith("FAIL:"))
+    .map(cleanBreakdownLine);
+  const warningLines = claimState.decisionBreakdown
+    .filter((line) => line.startsWith("WARNING:"))
+    .map(cleanBreakdownLine);
+  const breakdownLead = isApproved
+    ? failLines.length === 0
+      ? "Every required check cleared. The evidence and policy terms align, so the claim moves to payout."
+      : "The claim is approved overall, with the following items noted during review."
+    : failLines.length > 0
+      ? "The claim was not approved because the items below did not meet policy requirements."
+      : claimState.decisionReason ||
+        "The claim could not be approved on the current evidence.";
+  const breakdownDetails = isApproved ? warningLines : [...failLines, ...warningLines];
 
   const handlePromptClick = (message: string) => {
     submitMessage(
@@ -328,16 +345,21 @@ export function ClaimOutcomeView({
             {!!claimState.decisionBreakdown.length && (
               <section className="sl-card p-5">
                 <div className="sl-section-label mb-3">Decision breakdown</div>
-                <div className="space-y-2">
-                  {claimState.decisionBreakdown.slice(0, 6).map((line) => (
-                    <p
-                      key={line}
-                      className="text-sm leading-6 text-[var(--sl-ink-2)]"
-                    >
-                      {cleanBreakdownLine(line)}
-                    </p>
-                  ))}
-                </div>
+                <p className="text-sm leading-6 text-[var(--sl-ink-2)]">
+                  {breakdownLead}
+                </p>
+                {breakdownDetails.length > 0 && (
+                  <ul className="mt-3 space-y-2">
+                    {breakdownDetails.slice(0, 5).map((line) => (
+                      <li
+                        key={line}
+                        className="text-sm leading-6 text-[var(--sl-ink-2)]"
+                      >
+                        {line}
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </section>
             )}
           </div>
