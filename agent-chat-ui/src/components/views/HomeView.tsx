@@ -10,7 +10,6 @@ import {
   PanelRightOpen,
   Shield,
   Heart,
-  Users,
   Wallet,
   LayoutDashboard,
   Phone,
@@ -359,21 +358,23 @@ export function HomeView({
           style={{ maxWidth: 760 }}
         >
           <SuggestChip
-            icon={<Shield size={14} />}
-            label="See my policy"
-            onClick={() => handleSuggestion("Show me my policy details")}
-          />
-          <SuggestChip
             icon={<Heart size={14} />}
             label="File a claim"
             tone="accent"
             onClick={() => handleSuggestion("I would like to file a claim")}
           />
           <SuggestChip
-            icon={<Users size={14} />}
-            label="See beneficiaries"
-            onClick={() => handleSuggestion("Who are the beneficiaries on my policy?")}
+            icon={<Shield size={14} />}
+            label="See my policy"
+            onClick={() => handleSuggestion("Show me my policy details")}
           />
+          {onOpenProducts && (
+            <SuggestChip
+              icon={<WalletCards size={14} />}
+              label="View products"
+              onClick={onOpenProducts}
+            />
+          )}
           <SuggestChip
             icon={<Wallet size={14} />}
             label="View payments"
@@ -384,13 +385,6 @@ export function HomeView({
             label="Open dashboard"
             onClick={() => handleSuggestion("Show me my dashboard")}
           />
-          {onOpenProducts && (
-            <SuggestChip
-              icon={<WalletCards size={14} />}
-              label="View products"
-              onClick={onOpenProducts}
-            />
-          )}
         </motion.div>
 
         <motion.div
