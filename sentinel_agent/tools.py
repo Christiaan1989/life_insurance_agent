@@ -1762,3 +1762,59 @@ def send_claim_email(claim_id: str, policy_id: str) -> str:
         return json.dumps({"status": "sent", "to": _ALLOWED_RECIPIENT, "message": "Claim report emailed successfully."})
     except Exception as e:
         return json.dumps({"error": f"Failed to send email: {e}"})
+
+
+# ---------------------------------------------------------------------------
+# Banking & payout dispatch
+# ---------------------------------------------------------------------------
+@tool
+def get_banking_details(policyholder_id: str) -> str:
+    """Retrieve the policyholder's saved banking details for payout.
+
+    Use this AFTER a claim has been approved (status="approved") and the
+    payout amount has been calculated. Read the details back to the customer
+    and ask them to confirm: "Are these the correct banking details to pay
+    your claim into?". Do not call `confirm_payout_dispatch` until the
+    customer explicitly says yes.
+
+    Args:
+        policyholder_id: The policyholder UUID (from get_policy result).
+    """
+    resp = _get(f"/policyholders/{policyholder_id}/banking")
+    if isinstance(resp, str):
+        return resp
+    if resp.status_code != 200:
+        return _error(resp)
+    return resp.text
+
+
+@tool
+def confirm_payout_dispatch(
+    claim_id: str,
+    banking_id: str,
+    confirmed_by: Optional[str] = None,
+) -> str:
+    """Confirm banking details and forward the approved payout to finance.
+
+    Only call this AFTER the customer has explicitly confirmed the banking
+    details you read out from `get_banking_details`. The claim must already
+    be in 'approved' status. The backend writes a `payout_dispatched`
+    event and returns the canonical confirmation message to read back to
+    the customer.
+
+    Args:
+        claim_id: The approved claim UUID.
+        banking_id: The banking_id returned by `get_banking_details`.
+        confirmed_by: Optional free-text — typically the customer's
+            relationship label (e.g. "policyholder", "beneficiary").
+    """
+    body: dict[str, Any] = {"banking_id": banking_id}
+    if confirmed_by:
+        body["confirmed_by"] = confirmed_by
+
+    resp = _post(f"/claims/{claim_id}/payout-dispatch", json=body)
+    if isinstance(resp, str):
+        return resp
+    if resp.status_code != 200:
+        return _error(resp)
+    return resp.text

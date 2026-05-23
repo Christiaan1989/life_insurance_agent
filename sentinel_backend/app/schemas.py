@@ -233,6 +233,37 @@ class ClaimSummaryOut(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Banking & payout dispatch
+# ---------------------------------------------------------------------------
+class BankingDetailsOut(BaseModel):
+    banking_id: str
+    policyholder_id: str
+    bank_name: str
+    account_holder: str
+    account_number: str          # full number (the agent decides whether to mask)
+    account_number_masked: str   # convenience: "•••• 4321"
+    branch_code: str
+    account_type: str
+
+    model_config = {"from_attributes": True}
+
+
+class PayoutDispatchIn(BaseModel):
+    banking_id: str
+    confirmed_by: Optional[str] = None  # name/role of the person who confirmed (free text)
+
+
+class PayoutDispatchOut(BaseModel):
+    claim_id: str
+    banking_id: str
+    bank_name: str
+    account_number_masked: str
+    payout_amount: Optional[float]
+    dispatched_at: datetime
+    message: str
+
+
+# ---------------------------------------------------------------------------
 # Dashboard
 # ---------------------------------------------------------------------------
 class DashboardResponse(BaseModel):

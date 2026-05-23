@@ -211,3 +211,26 @@ class ClaimEvent(Base):
     created_at = Column(DateTime(timezone=True), default=_now)
 
     claim = relationship("Claim", back_populates="events")
+
+
+class BankingDetails(Base):
+    """Payout banking details for a policyholder.
+
+    One record per policyholder. Used at claim payout time to confirm where
+    the funds should be sent and to record dispatch to the finance team.
+    """
+    __tablename__ = "banking_details"
+
+    banking_id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    policyholder_id = Column(
+        String,
+        ForeignKey("policyholders.policyholder_id"),
+        nullable=False,
+        unique=True,
+    )
+    bank_name = Column(String, nullable=False)            # e.g. "Standard Bank"
+    account_holder = Column(String, nullable=False)       # full name on the account
+    account_number = Column(String, nullable=False)       # 10-digit SA account number (string to preserve leading zeros)
+    branch_code = Column(String, nullable=False)          # SA universal branch code (6 digits)
+    account_type = Column(String, default="Cheque")       # Cheque | Savings
+    created_at = Column(DateTime(timezone=True), default=_now)

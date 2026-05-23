@@ -1,3 +1,4 @@
+import hashlib
 import random
 import string
 from collections import defaultdict
@@ -12,16 +13,89 @@ from sqlalchemy.orm import selectinload
 from app.config import API_KEY, DEMO_OTP_EMAIL, RESEND_API_KEY, RESEND_FROM_EMAIL
 from app.database import async_session, engine, get_db
 from app.models import (
-    Base, Beneficiary, Claim, ClaimDocument, ClaimEvent, MedicalPractitioner,
-    MortalityEvent, OTPToken, Policy, Policyholder, PolicyRider, PremiumPayment,
-    SentinelAgent,
+    BankingDetails, Base, Beneficiary, Claim, ClaimDocument, ClaimEvent,
+    MedicalPractitioner, MortalityEvent, OTPToken, Policy, Policyholder,
+    PolicyRider, PremiumPayment, SentinelAgent,
 )
 from app.schemas import (
-    ClaimCreate, ClaimDocumentCreate, ClaimDocumentOut, ClaimEventCreate,
-    ClaimEventOut, ClaimOut, ClaimPatch, ClaimSummaryOut, DashboardResponse,
-    OTPRequestIn, OTPRequestOut, OTPVerifyIn, OTPVerifyOut, PolicyOut,
-    MortalityEventOut,
+    BankingDetailsOut, ClaimCreate, ClaimDocumentCreate, ClaimDocumentOut,
+    ClaimEventCreate, ClaimEventOut, ClaimOut, ClaimPatch, ClaimSummaryOut,
+    DashboardResponse, OTPRequestIn, OTPRequestOut, OTPVerifyIn, OTPVerifyOut,
+    PayoutDispatchIn, PayoutDispatchOut, PolicyOut, MortalityEventOut,
 )
+
+
+# ---------------------------------------------------------------------------
+# Banking helpers
+#
+# South African bank reference data. Branch codes are real universal branch
+# codes for each retail bank — these are used in production EFT routing.
+# The account number is generated deterministically from the policyholder_id
+# so the same person always gets the same details across restarts.
+# ---------------------------------------------------------------------------
+_SA_BANKS = [
+    {"bank_name": "Standard Bank", "branch_code": "051001"},
+    {"bank_name": "ABSA",          "branch_code": "632005"},
+    {"bank_name": "First National Bank", "branch_code": "250655"},
+    {"bank_name": "Nedbank",       "branch_code": "198765"},
+    {"bank_name": "Capitec Bank",  "branch_code": "470010"},
+    {"bank_name": "Investec",      "branch_code": "580105"},
+]
+_SA_ACCOUNT_TYPES = ["Cheque", "Savings"]
+
+
+def _generate_banking_for(policyholder_id: str, account_holder: str) -> dict:
+    """Deterministically generate realistic SA banking details from a policyholder_id."""
+    digest = hashlib.sha256(policyholder_id.encode("utf-8")).digest()
+    bank = _SA_BANKS[digest[0] % len(_SA_BANKS)]
+    account_type = _SA_ACCOUNT_TYPES[digest[1] % len(_SA_ACCOUNT_TYPES)]
+    # 10-digit account number derived from the hash (preserve leading zeros)
+    account_number = "".join(str(b % 10) for b in digest[2:12])
+    return {
+        "bank_name": bank["bank_name"],
+        "branch_code": bank["branch_code"],
+        "account_type": account_type,
+        "account_number": account_number,
+        "account_holder": account_holder,
+    }
+
+
+def _mask_account_number(number: str) -> str:
+    if not number:
+        return ""
+    if len(number) <= 4:
+        return number
+    return f"•••• {number[-4:]}"
+
+
+async def _backfill_banking_details() -> None:
+    """Ensure every policyholder has a banking_details row.
+
+    Idempotent. Runs once at startup so existing seeded databases pick up
+    banking details without needing a re-seed.
+    """
+    async with async_session() as db:
+        result = await db.execute(select(Policyholder))
+        policyholders = result.scalars().all()
+        if not policyholders:
+            return
+
+        existing_ids = set(
+            (
+                await db.execute(select(BankingDetails.policyholder_id))
+            ).scalars().all()
+        )
+
+        added = 0
+        for ph in policyholders:
+            if ph.policyholder_id in existing_ids:
+                continue
+            details = _generate_banking_for(ph.policyholder_id, ph.full_name)
+            db.add(BankingDetails(policyholder_id=ph.policyholder_id, **details))
+            added += 1
+
+        if added:
+            await db.commit()
 
 app = FastAPI(title="Sentinel Life Claims API", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -42,6 +116,9 @@ async def verify_api_key(x_api_key: str = Header(...)):
 async def on_startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    # Make sure every policyholder has banking details for payout. Safe to
+    # call on every boot — no-op if the rows already exist.
+    await _backfill_banking_details()
 
 
 # ---------------------------------------------------------------------------
@@ -213,6 +290,117 @@ async def get_mortality_events(policyholder_id: str, db: AsyncSession = Depends(
         select(MortalityEvent).where(MortalityEvent.policyholder_id == policyholder_id)
     )
     return result.scalars().all()
+
+
+# ---------------------------------------------------------------------------
+# Banking details for payout
+# ---------------------------------------------------------------------------
+@app.get(
+    "/policyholders/{policyholder_id}/banking",
+    response_model=BankingDetailsOut,
+    dependencies=[Depends(verify_api_key)],
+)
+async def get_banking_details(policyholder_id: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(BankingDetails).where(BankingDetails.policyholder_id == policyholder_id)
+    )
+    record = result.scalars().first()
+
+    # Lazy fallback: if for any reason this policyholder has no banking row
+    # yet (e.g. seeded after startup), generate one on the fly so the demo
+    # never dead-ends. The startup backfill normally handles this.
+    if not record:
+        ph = await db.get(Policyholder, policyholder_id)
+        if not ph:
+            raise HTTPException(status_code=404, detail="Policyholder not found")
+        details = _generate_banking_for(ph.policyholder_id, ph.full_name)
+        record = BankingDetails(policyholder_id=ph.policyholder_id, **details)
+        db.add(record)
+        await db.commit()
+        await db.refresh(record)
+
+    return BankingDetailsOut(
+        banking_id=record.banking_id,
+        policyholder_id=record.policyholder_id,
+        bank_name=record.bank_name,
+        account_holder=record.account_holder,
+        account_number=record.account_number,
+        account_number_masked=_mask_account_number(record.account_number),
+        branch_code=record.branch_code,
+        account_type=record.account_type,
+    )
+
+
+@app.post(
+    "/claims/{claim_id}/payout-dispatch",
+    response_model=PayoutDispatchOut,
+    dependencies=[Depends(verify_api_key)],
+)
+async def dispatch_payout(
+    claim_id: str,
+    body: PayoutDispatchIn,
+    db: AsyncSession = Depends(get_db),
+):
+    """Record that an approved payout has been dispatched to finance.
+
+    Verifies the claim is approved, that the banking record exists and
+    belongs to the same policyholder, and writes a `payout_dispatched`
+    claim event. Returns the masked banking summary the agent should read
+    back to the customer in the confirmation message.
+    """
+    claim = await db.get(Claim, claim_id)
+    if not claim:
+        raise HTTPException(status_code=404, detail="Claim not found")
+    if claim.status != "approved":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Claim is '{claim.status}', not approved — cannot dispatch payout.",
+        )
+
+    banking = await db.get(BankingDetails, body.banking_id)
+    if not banking:
+        raise HTTPException(status_code=404, detail="Banking details not found")
+    if banking.policyholder_id != claim.policyholder_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Banking record does not belong to this claim's policyholder.",
+        )
+
+    dispatched_at = datetime.now(timezone.utc)
+    event = ClaimEvent(
+        claim_id=claim.claim_id,
+        event_type="payout_dispatched",
+        message=(
+            f"Payout of R{claim.payout_amount or 0:,.2f} dispatched to "
+            f"{banking.bank_name} {_mask_account_number(banking.account_number)}."
+        ),
+        payload={
+            "banking_id": banking.banking_id,
+            "bank_name": banking.bank_name,
+            "account_number_masked": _mask_account_number(banking.account_number),
+            "branch_code": banking.branch_code,
+            "account_type": banking.account_type,
+            "payout_amount": claim.payout_amount,
+            "confirmed_by": body.confirmed_by,
+            "dispatched_at": dispatched_at.isoformat(),
+        },
+    )
+    db.add(event)
+    await db.commit()
+
+    return PayoutDispatchOut(
+        claim_id=claim.claim_id,
+        banking_id=banking.banking_id,
+        bank_name=banking.bank_name,
+        account_number_masked=_mask_account_number(banking.account_number),
+        payout_amount=claim.payout_amount,
+        dispatched_at=dispatched_at,
+        message=(
+            "Payout forwarded to the finance department. Expect funds in the "
+            "account within 1–2 weeks. If nothing is received by then, "
+            "contact the Sentinel Life call centre on 0800 SENTINEL."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

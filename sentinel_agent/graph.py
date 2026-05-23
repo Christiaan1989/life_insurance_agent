@@ -41,9 +41,11 @@ from sentinel_agent.tools import (
     analyze_death_certificate_forensics,
     calculate_payout,
     check_eligibility,
+    confirm_payout_dispatch,
     create_claim,
     evaluate_claim_evidence,
     generate_claim_report,
+    get_banking_details,
     get_claim,
     get_policy,
     log_event,
@@ -820,6 +822,7 @@ For every claim outcome, use this order:
 4. `set_active_view("claim_outcome")`
 5. `log_event(claim_id, "decision", decision_reason, payload)`
 6. Explain the outcome to the customer.
+7. If and only if status is `approved`, run the banking confirmation flow (see Step 7 in Section 5): `get_banking_details` → read masked details → wait for confirmation → `confirm_payout_dispatch` → read the finance-dispatch message.
 
 ---
 
@@ -945,7 +948,25 @@ If `recommended_status` is `approved` and `eligible_for_payout` is true:
 2. Call `update_claim(status="approved", decision_reason=<tool reason>, payout_amount=<calculated amount>)`.
 3. Call `set_active_view("claim_outcome")`.
 4. Call `log_event(event_type="decision", message=<tool reason>, payload=<tool result and payout>)`.
-5. Explain approval and payout.
+5. Explain approval and payout in one short paragraph.
+6. **Proceed to banking confirmation — see Step 7.**
+
+### Step 7: Banking confirmation (approved claims only)
+Only runs after an `approved` decision and `claim_outcome` view. Never run this for `denied` or `pending_info` claims.
+
+1. Call `get_banking_details(policyholder_id)` to retrieve the saved banking record. Use the `policyholder_id` from the loaded policy.
+2. Read the details back to the customer in **one short sentence**, using the *masked* account number (the `account_number_masked` field, e.g. "•••• 4321"). Example:
+   "I have your payout going to {bank_name} {account_type}, account ending {account_number_masked}, branch code {branch_code}. Is that still correct?"
+   Never read the full unmasked account number aloud.
+3. Wait for the customer's reply. Do not call any tool yet.
+4. If the customer confirms (yes / correct / that's right / proceed / send it):
+   - Call `confirm_payout_dispatch(claim_id, banking_id, confirmed_by="policyholder")` using the `banking_id` from step 1.
+   - Read back the canonical confirmation message from the tool result's `message` field, verbatim or paraphrased into one or two sentences. The required points are:
+     a. The payout has been forwarded to the finance department.
+     b. The customer should expect funds in their account within one to two weeks.
+     c. If nothing arrives by then, they should contact the Sentinel Life call centre on 0800 SENTINEL.
+   - Do not call `set_active_view` — stay on `claim_outcome`.
+5. If the customer says the banking details are wrong, do NOT call `confirm_payout_dispatch`. Instead say: "I'll flag this with the Sentinel team to update your banking record before we dispatch the payout. A claims officer will be in touch within one business day." Do not invent an update tool — there is none.
 
 ---
 
@@ -1071,6 +1092,8 @@ AGENT_TOOLS = [
     calculate_payout,
     generate_claim_report,
     send_claim_email,
+    get_banking_details,
+    confirm_payout_dispatch,
 ]
 
 
@@ -1091,7 +1114,7 @@ Before writing any customer-facing conclusion about the document, you must call 
 4. `evaluate_claim_evidence`.
 5. Based on that tool result:
    - pending_info/denied: call `update_claim`, then `set_active_view("claim_outcome")`, then `log_event`.
-   - approved: call `calculate_payout`, then `update_claim`, then `set_active_view("claim_outcome")`, then `log_event`.
+   - approved: call `calculate_payout`, then `update_claim`, then `set_active_view("claim_outcome")`, then `log_event`, then run the banking confirmation flow (`get_banking_details` → confirm with customer → `confirm_payout_dispatch`).
 
 Death-certificate fraud findings must appear in the decision reason: include integrity score, fraud score, risk level, and the most important flags or note that no serious flags were found. Do not answer from the PDF/image in prose only. The claim state must be updated through tools first.
 """
