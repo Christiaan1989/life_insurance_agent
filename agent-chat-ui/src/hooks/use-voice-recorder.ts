@@ -9,6 +9,39 @@ type RecorderState =
   | { status: "recording"; startedAt: number }
   | { status: "processing" };
 
+/**
+ * Microphone access requires a secure context. Browsers only expose
+ * `navigator.mediaDevices` on https:// or on localhost/127.0.0.1. When the app
+ * is opened over plain http on a LAN IP (e.g. http://192.168.x.x:3000),
+ * `navigator.mediaDevices` is `undefined` and reading `.getUserMedia` throws
+ * "Cannot read properties of undefined (reading 'getUserMedia')".
+ * Surface an actionable message instead of that cryptic error.
+ */
+function assertMicrophoneAvailable() {
+  if (
+    typeof navigator !== "undefined" &&
+    navigator.mediaDevices &&
+    typeof navigator.mediaDevices.getUserMedia === "function"
+  ) {
+    return;
+  }
+
+  const host =
+    typeof window !== "undefined" ? window.location.hostname : "";
+  const isLocal =
+    host === "localhost" || host === "127.0.0.1" || host === "::1";
+
+  if (!isLocal) {
+    throw new Error(
+      "Microphone needs a secure connection. Open the app via https:// or http://localhost instead of an IP address.",
+    );
+  }
+
+  throw new Error(
+    "Microphone is not available in this browser. Try a recent version of Chrome, Edge, or Safari.",
+  );
+}
+
 export function useVoiceRecorder(options?: {
   mimeType?: string;
   onTranscript?: (text: string) => void;
@@ -437,8 +470,17 @@ export function useVoiceRecorder(options?: {
 
   const startRecording = useCallback(async () => {
     setError(null);
-    setState({ status: "requesting" });
     clearAutoStopTimer();
+
+    try {
+      assertMicrophoneAvailable();
+    } catch (err: any) {
+      setError(err?.message ?? "Microphone is not available");
+      setState({ status: "idle" });
+      return;
+    }
+
+    setState({ status: "requesting" });
 
     try {
       const startedRealtime = await startRealtimeRecording();

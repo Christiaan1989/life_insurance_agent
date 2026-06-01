@@ -1514,33 +1514,29 @@ def calculate_payout(
 # ---------------------------------------------------------------------------
 # Claim Report (PDF)
 # ---------------------------------------------------------------------------
-@tool
-def generate_claim_report(claim_id: str, policy_id: str) -> str:
-    """Generate a PDF summary report for the claim.
+def _create_claim_report_pdf(claim_id: str, policy_id: str):
+    """Build the Sentinel Life claim report PDF on disk.
 
-    Call this after the final decision has been communicated and any payout
-    has been calculated. Produces a professional Sentinel Life–branded PDF
-    with all claim details, eligibility checks, documents received, and
-    payout breakdown.
+    Shared by `generate_claim_report` and `send_claim_email` so the email can
+    self-heal and build the PDF itself if it is not on disk yet (e.g. when the
+    model issues the generate and send tool calls in parallel).
 
-    Args:
-        claim_id: The claim UUID.
-        policy_id: The policy ID.
+    Returns (filepath, None) on success, or (None, error_json_str) on failure.
     """
     from fpdf import FPDF
 
     claim_resp = _get(f"/claims/{claim_id}")
     if isinstance(claim_resp, str):
-        return claim_resp
+        return None, claim_resp
     if claim_resp.status_code != 200:
-        return _error(claim_resp)
+        return None, _error(claim_resp)
     claim = claim_resp.json()
 
     policy_resp = _get(f"/policies/{policy_id}")
     if isinstance(policy_resp, str):
-        return policy_resp
+        return None, policy_resp
     if policy_resp.status_code != 200:
-        return _error(policy_resp)
+        return None, _error(policy_resp)
     policy = policy_resp.json()
 
     _REPORTS_DIR.mkdir(exist_ok=True)
@@ -1672,11 +1668,30 @@ def generate_claim_report(claim_id: str, policy_id: str) -> str:
     # Log it (fire-and-forget — ignore errors)
     _post(f"/claims/{claim_id}/events", json={"event_type": "note", "message": f"PDF claim report generated: {filename}"})
 
+    return filepath, None
+
+
+@tool
+def generate_claim_report(claim_id: str, policy_id: str) -> str:
+    """Generate a PDF summary report for the claim.
+
+    Call this after the final decision has been communicated and any payout
+    has been calculated. Produces a professional Sentinel Life-branded PDF
+    with all claim details, eligibility checks, documents received, and
+    payout breakdown.
+
+    Args:
+        claim_id: The claim UUID.
+        policy_id: The policy ID.
+    """
+    filepath, err = _create_claim_report_pdf(claim_id, policy_id)
+    if err:
+        return err
     return json.dumps({
         "status": "success",
-        "filename": filename,
+        "filename": filepath.name,
         "path": str(filepath),
-        "message": f"Sentinel Life claim report saved to reports/{filename}",
+        "message": f"Sentinel Life claim report saved to reports/{filepath.name}",
     })
 
 
@@ -1719,7 +1734,13 @@ def send_claim_email(claim_id: str, policy_id: str) -> str:
     filename = f"SL_{claim_id[:8]}_claim_report.pdf"
     filepath = _REPORTS_DIR / filename
     if not filepath.exists():
-        return json.dumps({"error": f"Report PDF not found. Call generate_claim_report first."})
+        # Self-heal: the report may not be on disk yet (e.g. the model issued
+        # generate_claim_report and send_claim_email in the same turn / in
+        # parallel). Build it now so the email never silently fails.
+        filepath, err = _create_claim_report_pdf(claim_id, policy_id)
+        if err:
+            return err
+        filename = filepath.name
 
     pdf_bytes = filepath.read_bytes()
     status_display = claim.get("status", "").upper().replace("_", " ")

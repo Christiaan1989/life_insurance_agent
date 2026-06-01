@@ -230,7 +230,7 @@ class BankingDetails(Base):
     )
     bank_name = Column(String, nullable=False)            # e.g. "Standard Bank"
     account_holder = Column(String, nullable=False)       # full name on the account
-    account_number = Column(String, nullable=False)       # 10-digit SA account number (string to preserve leading zeros)
+    account_number = Column(String, nullable=False)       # masked only, e.g. "•••• 2239" — the full number is never persisted
     branch_code = Column(String, nullable=False)          # SA universal branch code (6 digits)
     account_type = Column(String, default="Cheque")       # Cheque | Savings
     created_at = Column(DateTime(timezone=True), default=_now)

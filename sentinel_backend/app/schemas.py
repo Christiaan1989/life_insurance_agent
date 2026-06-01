@@ -240,8 +240,8 @@ class BankingDetailsOut(BaseModel):
     policyholder_id: str
     bank_name: str
     account_holder: str
-    account_number: str          # full number (the agent decides whether to mask)
-    account_number_masked: str   # convenience: "•••• 4321"
+    account_number: str          # masked only, e.g. "•••• 2239" — the full number is never stored or returned
+    account_number_masked: str   # same masked value, kept for API compatibility
     branch_code: str
     account_type: str
 

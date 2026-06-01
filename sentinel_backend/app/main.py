@@ -49,13 +49,16 @@ def _generate_banking_for(policyholder_id: str, account_holder: str) -> dict:
     digest = hashlib.sha256(policyholder_id.encode("utf-8")).digest()
     bank = _SA_BANKS[digest[0] % len(_SA_BANKS)]
     account_type = _SA_ACCOUNT_TYPES[digest[1] % len(_SA_ACCOUNT_TYPES)]
-    # 10-digit account number derived from the hash (preserve leading zeros)
-    account_number = "".join(str(b % 10) for b in digest[2:12])
+    # 10-digit account number derived from the hash (preserve leading zeros).
+    # The full number is used only to derive the masked form — it is never
+    # returned or persisted. We store the masked value (e.g. "•••• 2239")
+    # so the full account number lives nowhere in the database.
+    full_account_number = "".join(str(b % 10) for b in digest[2:12])
     return {
         "bank_name": bank["bank_name"],
         "branch_code": bank["branch_code"],
         "account_type": account_type,
-        "account_number": account_number,
+        "account_number": _mask_account_number(full_account_number),
         "account_holder": account_holder,
     }
 
@@ -63,6 +66,10 @@ def _generate_banking_for(policyholder_id: str, account_holder: str) -> dict:
 def _mask_account_number(number: str) -> str:
     if not number:
         return ""
+    # Idempotent: an already-masked value (e.g. "•••• 2239") is returned as-is
+    # so we never double-mask or accidentally re-expose stored data.
+    if "•" in number:
+        return number
     if len(number) <= 4:
         return number
     return f"•••• {number[-4:]}"
@@ -97,6 +104,27 @@ async def _backfill_banking_details() -> None:
         if added:
             await db.commit()
 
+
+async def _mask_stored_account_numbers() -> None:
+    """Ensure no full account number is persisted.
+
+    Idempotent. Replaces any legacy banking row that still holds a full
+    account number with its masked form (e.g. "•••• 2239"). Runs at startup
+    so existing databases are cleaned without a re-seed. After this, the full
+    account number lives nowhere in the database.
+    """
+    async with async_session() as db:
+        result = await db.execute(select(BankingDetails))
+        records = result.scalars().all()
+        changed = 0
+        for rec in records:
+            if rec.account_number and "•" not in rec.account_number:
+                rec.account_number = _mask_account_number(rec.account_number)
+                changed += 1
+        if changed:
+            await db.commit()
+
+
 app = FastAPI(title="Sentinel Life Claims API", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
@@ -119,6 +147,8 @@ async def on_startup():
     # Make sure every policyholder has banking details for payout. Safe to
     # call on every boot — no-op if the rows already exist.
     await _backfill_banking_details()
+    # Mask any legacy full account numbers still in storage. Idempotent.
+    await _mask_stored_account_numbers()
 
 
 # ---------------------------------------------------------------------------
@@ -485,6 +515,40 @@ async def add_claim_document(claim_id: str, body: ClaimDocumentCreate, db: Async
     claim = result.scalars().first()
     if not claim:
         raise HTTPException(status_code=404, detail="Claim not found")
+
+    # Supersede prior versions of the same logical document. A re-upload of the
+    # same document (matched on document_type + document_name) replaces the old
+    # copy instead of stacking alongside it, so a correction genuinely fixes the
+    # record. Without this, a stale document (e.g. one with a wrong ID number)
+    # lingers on the claim and keeps failing identity/evidence checks even after
+    # the corrected document is uploaded.
+    existing_result = await db.execute(
+        select(ClaimDocument).where(
+            ClaimDocument.claim_id == claim_id,
+            ClaimDocument.document_type == body.document_type,
+            ClaimDocument.document_name == body.document_name,
+        )
+    )
+    superseded = existing_result.scalars().all()
+    superseded_ids = [old.document_id for old in superseded]
+    for old in superseded:
+        await db.delete(old)
+    if superseded_ids:
+        db.add(
+            ClaimEvent(
+                claim_id=claim_id,
+                event_type="document_superseded",
+                message=(
+                    f"Replaced {len(superseded_ids)} prior version(s) of "
+                    f"{body.document_name or body.document_type}."
+                ),
+                payload={
+                    "document_type": body.document_type,
+                    "document_name": body.document_name,
+                    "superseded_document_ids": superseded_ids,
+                },
+            )
+        )
 
     doc = ClaimDocument(
         claim_id=claim_id,
