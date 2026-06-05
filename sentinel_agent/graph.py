@@ -814,6 +814,7 @@ Tool calls are not optional when a workflow step requires them.
 6. Do not calculate payout unless `evaluate_claim_evidence` says `eligible_for_payout: true`.
 7. Death certificates must pass `analyze_death_certificate_forensics` before final evidence evaluation. Filenames containing `DC`, `death certificate`, `death cert`, `certificate of death`, `deceased certificate`, `BI-1663`, or DHA death wording count as death certificates for this tool.
 8. If you accidentally realize you have enough information for a required tool, call the tool first. Do not answer in prose first.
+9. **Identity is a hard security gate.** Never approve a claim, calculate a payout, or run the banking/payout flow if the submitted documents do not clearly belong to the policyholder. If `evaluate_claim_evidence` reports an identity mismatch (e.g. `Document ID Matches Policyholder` = false), the claim must be set to `pending_info`, not approved — no exceptions.
 
 ### Required final-decision order
 For every claim outcome, use this order:
@@ -926,6 +927,20 @@ For a critical illness report, extract:
 `patient_name`, `id_number`, `consultation_date`, `diagnosis`, `icd10_code`, `stage`, `treatment_plan`, `specialist`, `diagnosis_final`, `pathology_or_staging_present`, `key_findings`.
 
 Use `null` if a field is not visible. Never invent fields.
+
+### Identity verification — read the ID exactly (security / fraud check)
+The `id_number` and the person's name on every document are **fraud-control fields**. Treat document identity as a deliberate security check, not a formality:
+
+1. **Transcribe the ID exactly as printed on the document — digit for digit.** Read it carefully off the page each time.
+2. **Never substitute, auto-correct, normalise, or "fix" the ID to the policyholder's known ID** from the `[VERIFIED]` line or the loaded policy. If the document shows a *different* number than the policyholder's, you MUST record the *different* number exactly as it appears. Do not assume the document is correct just because the customer is verified.
+3. If any digit is unclear or unreadable, use `null` — never guess or fill in the expected value.
+4. The same applies to the name: record the name as printed.
+
+After `record_document`, `evaluate_claim_evidence` compares the document's ID and name against the policyholder on record. If it reports an identity mismatch (`Document ID Matches Policyholder` = false, or a name mismatch):
+- This is a **hard blocker**. Do NOT approve, do NOT calculate payout, do NOT run the banking flow.
+- Set the claim to `pending_info`, move to `claim_outcome`, and log the decision.
+- Explain plainly that the ID number on the submitted document does not match the policyholder's records, and ask for a corrected document that matches.
+- Only continue toward approval once a resubmitted document's identity matches.
 
 ### Step 6: Decide from evidence
 After `evaluate_claim_evidence`, follow the returned result.
@@ -1111,10 +1126,17 @@ AGENT_TOOLS = [
 
 
 def _get_agent_llm():
+    # parallel_tool_calls=False forces the model to emit ONE tool call per turn.
+    # The claim workflow has strict ordering dependencies (e.g. record_document
+    # must finish and commit before evaluate_claim_evidence reads the claim).
+    # When the model batches several tool calls into one assistant message they
+    # execute concurrently and the ordering is lost — e.g. evaluate runs before
+    # the death-certificate write commits and wrongly reports it missing. One
+    # tool per turn guarantees sequential, read-after-write execution.
     return ChatOpenAI(
         model=os.getenv("OPENAI_MODEL", "gpt-4o"),
         temperature=0,
-    ).bind_tools(AGENT_TOOLS)
+    ).bind_tools(AGENT_TOOLS, parallel_tool_calls=False)
 
 
 DOCUMENT_UPLOAD_REMINDER = """\

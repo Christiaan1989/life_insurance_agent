@@ -79,14 +79,18 @@ def _patch(path: str, **kwargs) -> httpx.Response | str:
 
 
 def _pdf_safe(text: str) -> str:
-    return (
-        text
+    cleaned = (
+        str(text)
         .replace("\u2013", "-").replace("\u2014", "-")
         .replace("\u2018", "'").replace("\u2019", "'")
         .replace("\u201c", '"').replace("\u201d", '"')
         .replace("\u2026", "...").replace("\u2022", "-")
         .replace("\u2192", "->")
     )
+    # Safety net: the core PDF fonts (Helvetica) only support Latin-1. Drop any
+    # remaining characters they cannot encode so report generation never crashes
+    # with an FPDF encoding error on an unexpected glyph.
+    return cleaned.encode("latin-1", "replace").decode("latin-1")
 
 
 def is_likely_death_certificate_filename(filename: str | None) -> bool:
@@ -908,10 +912,29 @@ def _policyholder_match_status(documents: list[dict[str, Any]], policy: dict[str
     else:
         name_status = "mismatched"
 
-    if not doc_id or not policy_id_number:
+    # Security check: inspect the ID on EVERY document, not just the first one.
+    # Every document on the claim must belong to the policyholder, so a foreign
+    # ID on ANY document is a red flag. Checking only the first document made
+    # detection depend on upload order — a wrong-ID document could slip through
+    # whenever a correct document happened to be recorded first.
+    all_doc_ids: list[str] = []
+    for d in documents:
+        extracted = d.get("extracted_data")
+        if isinstance(extracted, dict):
+            for key in ("id_number", "national_id", "patient_id"):
+                value = _normalize_id(extracted.get(key))
+                if value and value not in all_doc_ids:
+                    all_doc_ids.append(value)
+
+    if not policy_id_number or (not all_doc_ids and not doc_id):
         id_status = "missing"
-    elif doc_id == policy_id_number:
+    elif all_doc_ids and any(i != policy_id_number for i in all_doc_ids):
+        # At least one document carries an ID that is not the policyholder's.
+        id_status = "mismatched"
+        doc_id = next(i for i in all_doc_ids if i != policy_id_number)
+    elif all_doc_ids or doc_id == policy_id_number:
         id_status = "matched"
+        doc_id = policy_id_number
     else:
         id_status = "mismatched"
 
@@ -1578,6 +1601,18 @@ def _create_claim_report_pdf(claim_id: str, policy_id: str):
         pdf.set_font("Helvetica", "", 9)
         pdf.cell(0, 5, _pdf_safe(str(value)), new_x="LMARGIN", new_y="NEXT")
 
+    def block(label, value):
+        # Label on its own line, then the (possibly long) value wrapped at full
+        # page width from the left margin. multi_cell(0, ...) must start at the
+        # left margin — calling it right after an inline label cell leaves the
+        # cursor near the right edge and raises FPDFException ("Not enough
+        # horizontal space to render a single character").
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.cell(0, 5, f"{label}:", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_x(pdf.l_margin)
+        pdf.multi_cell(0, 5, _pdf_safe(str(value)))
+
     # Claim details
     section("Claim Details")
     pdf.set_font("Helvetica", "", 9)
@@ -1590,15 +1625,9 @@ def _create_claim_report_pdf(claim_id: str, policy_id: str):
     if claim.get("icd10_code"):
         row("ICD-10 Code", claim.get("icd10_code", "N/A"))
     if claim.get("diagnosis_description"):
-        pdf.set_font("Helvetica", "B", 9)
-        pdf.cell(55, 5, "Diagnosis:")
-        pdf.set_font("Helvetica", "", 9)
-        pdf.multi_cell(0, 5, _pdf_safe(claim.get("diagnosis_description", "")))
+        block("Diagnosis", claim.get("diagnosis_description", ""))
     if claim.get("decision_reason"):
-        pdf.set_font("Helvetica", "B", 9)
-        pdf.cell(55, 5, "Decision Reason:")
-        pdf.set_font("Helvetica", "", 9)
-        pdf.multi_cell(0, 5, _pdf_safe(claim.get("decision_reason", "")))
+        block("Decision Reason", claim.get("decision_reason", ""))
     if claim.get("payout_amount"):
         row("Payout Amount", f"R{claim['payout_amount']:,.2f}")
     pdf.ln(2)

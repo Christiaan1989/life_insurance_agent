@@ -306,7 +306,7 @@ export async function realtimeSpeak(text: string): Promise<boolean> {
       response: {
         conversation: "none",
         output_modalities: ["audio"],
-        instructions: `Read this English text aloud verbatim. Do not translate, switch languages, add, remove, rephrase, or answer anything else:\n\n${trimmed}`,
+        instructions: `Read the following English text aloud, word for word, and speak nothing else. Do not translate, switch languages, add, remove, rephrase, answer, or comment. Never announce, describe, or mention any mode, setting, personality, version, status, or capability — output only the spoken words of the text below:\n\n${trimmed}`,
       },
     });
   });

@@ -516,19 +516,30 @@ async def add_claim_document(claim_id: str, body: ClaimDocumentCreate, db: Async
     if not claim:
         raise HTTPException(status_code=404, detail="Claim not found")
 
-    # Supersede prior versions of the same logical document. A re-upload of the
-    # same document (matched on document_type + document_name) replaces the old
-    # copy instead of stacking alongside it, so a correction genuinely fixes the
-    # record. Without this, a stale document (e.g. one with a wrong ID number)
-    # lingers on the claim and keeps failing identity/evidence checks even after
-    # the corrected document is uploaded.
-    existing_result = await db.execute(
-        select(ClaimDocument).where(
-            ClaimDocument.claim_id == claim_id,
-            ClaimDocument.document_type == body.document_type,
-            ClaimDocument.document_name == body.document_name,
-        )
-    )
+    # Supersede prior versions of the same logical document so a re-upload
+    # corrects the record instead of stacking alongside it. Without this, a
+    # stale document (e.g. one with a wrong ID number) lingers on the claim and
+    # keeps failing identity/evidence checks even after the corrected document
+    # is uploaded.
+    #
+    # For single-instance document types (a claim only ever has ONE current
+    # death certificate / post-mortem / disability assessment) we supersede by
+    # document_type alone — a corrected re-upload must replace the old one even
+    # if the model gave it a slightly different name (e.g. "…-corrected").
+    # For other types (medical_report, id_document, other) several distinct
+    # documents can legitimately coexist, so we match on type + name.
+    SINGLE_INSTANCE_TYPES = {
+        "death_certificate",
+        "post_mortem_report",
+        "disability_assessment",
+    }
+    conditions = [
+        ClaimDocument.claim_id == claim_id,
+        ClaimDocument.document_type == body.document_type,
+    ]
+    if body.document_type not in SINGLE_INSTANCE_TYPES:
+        conditions.append(ClaimDocument.document_name == body.document_name)
+    existing_result = await db.execute(select(ClaimDocument).where(*conditions))
     superseded = existing_result.scalars().all()
     superseded_ids = [old.document_id for old in superseded]
     for old in superseded:

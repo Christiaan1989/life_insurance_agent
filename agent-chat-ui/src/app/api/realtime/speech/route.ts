@@ -8,6 +8,8 @@ const REALTIME_SPEECH_INSTRUCTIONS = [
   "Never switch to another language, dialect, or accent mid-response.",
   "Pronounce numbers, policy IDs, names, and abbreviations in English.",
   "Use a calm, clear, professional insurance-assistant voice.",
+  "Never announce, describe, or mention your own mode, settings, personality, version, status, or capabilities.",
+  "Produce no audio other than the exact text provided — no preambles, status updates, or system messages.",
 ].join(" ");
 
 async function createRealtimeCall(sdp: string) {

@@ -31,6 +31,10 @@ export function VoiceNav({ className }: { className?: string }) {
   const [navState, setNavState] = useState<NavState>("idle");
 
   const { toggle, isRecording, isBusy, error } = useVoiceRecorder({
+    // Give the speaker more time to finish before auto-committing. The default
+    // (1600ms) cut people off mid-request; 3500ms allows for natural pauses
+    // while describing where they want to navigate.
+    autoStopOnSilenceMs: 3500,
     onTranscript: (text) => {
       if (!text) {
         setNavState("idle");
